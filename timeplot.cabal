@@ -1,5 +1,5 @@
 Name: timeplot
-Version: 0.2.14
+Version: 0.2.15
 License: BSD3
 License-file: LICENSE
 Copyright: Eugene Kirpichov, 2009
@@ -16,8 +16,8 @@ Cabal-Version: >= 1.6
 Build-Type: Simple
 Homepage: http://haskell.org/haskellwiki/Timeplot
 Source-repository head
-  type: darcs
-  location: http://patch-tag.com/r/jkff/timeplot
+  type: git
+  location: git://github.com/jkff/timeplot
 
 flag splitbase
   description: Choose the new smaller, split-up base package.
