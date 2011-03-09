@@ -59,7 +59,7 @@ data InEvent = InEdge  Edge
              | InAtom  S.ByteString
              deriving (Show)
 
-data OutFormat = PNG | PDF | PS | SVG 
+data OutFormat = PNG | PDF | PS | SVG
 #if HAVE_GTK
                | Window
 #endif
@@ -68,8 +68,8 @@ class HasDelta t where
   type Delta t :: *
   add :: Delta t -> t -> t
   sub :: t -> t -> Delta t
-  -- the 't' is a dummy argument here, just to aid type checking 
-  -- (since given just a Delta t, the compiler won't be able to 
+  -- the 't' is a dummy argument here, just to aid type checking
+  -- (since given just a Delta t, the compiler won't be able to
   -- figure out which 't' we're speaking of)
   toSeconds :: Delta t -> t -> Double
   fromSeconds :: Double -> t -> Delta t
@@ -91,7 +91,7 @@ instance HasDelta LocalTime where
 instance Read NominalDiffTime where
   readsPrec n s = [(fromSeconds i (undefined::LocalTime), s') | (i,s') <- readsPrec n s]
 
-class (Ord t, HasDelta t, PlotValue t, Show t, Show (Delta t), Read (Delta t)) => TimeAxis t 
+class (Ord t, HasDelta t, PlotValue t, Show t, Show (Delta t), Read (Delta t)) => TimeAxis t
 
 instance TimeAxis Double
 
@@ -110,11 +110,9 @@ data (TimeAxis t) => ChartKind t = KindEvent
                | KindCumSum
                | KindSum       { binSize :: Delta t }
                | KindNone
-               deriving (Show)
 
-
-data Conf = forall t . TimeAxis t =>
-  Conf {
+data ConcreteConf t =
+  ConcreteConf {
     inFile        :: FilePath,
     parseTime     :: B.ByteString -> Maybe (t, B.ByteString),
     chartKindF    :: S.ByteString -> [ChartKind t],
@@ -127,42 +125,45 @@ data Conf = forall t . TimeAxis t =>
     outResolution :: (Int,Int)
   }
 
+data Conf = forall t . (TimeAxis t) => Conf {concrete :: ConcreteConf t}
+
 data KindChoiceOperator = Cut | Accumulate
 
 readConf :: [String] -> Conf
 readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%OS")) of
-    ["num"]  -> readConf' readDouble
-    "date":f -> readConf' (strptime (B.pack $ unwords f))
+    ["num"]  -> Conf $ readConf' readDouble
+    "date":f -> Conf $ readConf' (strptime (B.pack $ unwords f))
     _        -> error "Unrecognized time format (-tf)"
   where
-    int2double = fromIntegral::Int-> Double
+    int2double = fromIntegral :: Int -> Double
     single desc name def = case (getArg name 1 args) of
       [[r]] -> r
       []    -> def
       _     -> error $ "Single argument expected for: "++desc++" ("++name++")"
 
-    readConf' parseTime = Conf {inFile=inFile, outFile=outFile, outFormat=outFormat, outResolution=outRes,
+    readConf' :: forall t. (TimeAxis t) => (B.ByteString -> Maybe (t, B.ByteString)) -> ConcreteConf t
+    readConf' parseTime = ConcreteConf {inFile=inFile, outFile=outFile, outFormat=outFormat, outResolution=outRes,
                       chartKindF=chartKindF, parseTime=parseTime, fromTime=fromTime, toTime=toTime}
       where
         inFile      = single "input file"  "-if" (error "No input file (-if) specified")
         outFile     = single "output file" "-o"  (error "No output file (-o) specified (or have you specified '-of x' and built without --flags=gtk ?)")
         outFormat   = maybe PNG id $ lookup (single "output format" "-of" (name2format outFile)) $
             [("png",PNG), ("pdf",PDF), ("ps",PS), ("svg",SVG)
-#if HAVE_GTK            
+#if HAVE_GTK
             , ("x",Window)
-#endif            
+#endif
             ]
           where
             name2format = reverse . takeWhile (/='.') . reverse
         outRes      = parseRes $ single "output resolution" "-or" "640x480"
           where
             parseRes s = case break (=='x') s of (h,_:v) -> (read h,read v)
-        chartKindF  = kindByRegex $ 
+        chartKindF  = kindByRegex $
             [(Cut,        matches regex, parseKind (words kind)) | [regex,kind] <- getArg "-k" 2 args] ++
             [(Accumulate, matches regex, parseKind (words kind)) | [regex,kind] <- getArg "+k" 2 args]
           where
             ifNull xs y = case xs of { [] -> [y] ; _ -> xs }
-            kindByRegex rks s = (defaultKindsPlus ++ 
+            kindByRegex rks s = (defaultKindsPlus ++
                                 [k | (Accumulate, p, k) <- rks, p s] ++
                                 [case [k | (Cut, p, k) <- rks, p s] of { [] -> defaultKindMinus; k:_ -> k }])
             matches regex = matchTest (makeRegexOpts defaultCompOpt (ExecOption {captureGroups = False}) regex)
@@ -184,7 +185,7 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
         parseKind ["cumsum"      ] = KindCumSum
         parseKind ["sum",     b  ] = KindSum       {binSize=read b}
         parseKind ("duration":ws)  = KindDuration  {subKind=parseKind ws, mapName=id}
-        parseKind (('d':'u':'r':'a':'t':'i':'o':'n':'[':sep:"]"):ws)  
+        parseKind (('d':'u':'r':'a':'t':'i':'o':'n':'[':sep:"]"):ws)
                                    = KindDuration  {subKind=parseKind ws, mapName = fst . S.break (==sep)}
         parseKind ["none"        ] = KindNone
         parseKind ws               = error ("Unknown diagram kind " ++ unwords ws)
@@ -244,34 +245,45 @@ makeChart :: forall t . TimeAxis t =>
 makeChart chartKindF []                  = emptyRenderable
 makeChart chartKindF events0 = renderLayout1sStacked plots
   where
-    events@((t0,_,_):_) = sortBy (comparing (\(t,_,_)->t)) events0
+    events :: [(t, S.ByteString, InEvent)]
+    events@((t0,_,_):_) = sortBy (comparing (\(t,_,_)-> t)) events0
+
+    track2events :: M.Map S.ByteString [(t, InEvent)]
     track2events = reverse `fmap` foldl' insert M.empty [(s, (t, e)) | (t, s, e) <- events]
       where insert m (s, r) = M.alter (Just . maybe [r] (r:)) s m
 
-    plots          = [ plotTrack k kind es | (k, es) <- M.toList track2events, 
+    plots          = [ plotTrack k kind es | (k, es) <- M.toList track2events,
                                              kind <- chartKindF k,
                                              case kind of {KindNone -> False ; KindDuration _ _ -> False ; _ -> True} ] ++
                      durationPlots
+
     durationPlots  = [ plotWithKind name k es | (name, (k,es)) <- M.toList durationTracks ]
       where
         durationTracks = M.fromListWith (\(ka,as) (kb,bs) -> (ka,mergeOn fst as bs)) components
-        components = [ (mn k, (sk, edges2durations (edges es))) 
-                     | (k, es) <- M.toList track2events, 
+        components = [ (mn k, (sk, edges2durations (edges es)))
+                     | (k, es) <- M.toList track2events,
                        kind <- chartKindF k,
                        Just (sk,mn) <- [case kind of {KindDuration mn sk -> Just (sk,mn) ; _ -> Nothing}]]
         mergeOn f [] ys = ys
         mergeOn f xs [] = xs
-        mergeOn f (x:xs) (y:ys) 
+        mergeOn f (x:xs) (y:ys)
           | f x <= f y = x : mergeOn f xs (y:ys)
-          | otherwise  = y : mergeOn f (x:xs) ys                      
+          | otherwise  = y : mergeOn f (x:xs) ys
 
+    minTime, maxTime  :: t
     (minTime,maxTime) = (head times, last times)
+
+    times             :: [t]
     times             = sort $ [t | tes <- M.elems track2events, (t,_)<- tes]
+
+    commonTimeAxis    :: AxisData t
     commonTimeAxis    = autoAxis times
 
-    plotTrack      name kind es = plotWithKind name kind es
+    plotTrack :: S.ByteString -> ChartKind t -> [(t,InEvent)] -> AnyLayout1 t
+    plotTrack name kind es = plotWithKind name kind es
 
-    plotWithKind   name k es = case k of
+    plotWithKind :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
+    plotWithKind name k es = case k of
       KindCount     bs    -> withAnyOrdinate $ plotTrackCount     name es bs
       KindFreq      bs k  -> withAnyOrdinate $ plotTrackFreq      name es bs k
       KindHistogram bs k  -> withAnyOrdinate $ plotTrackHist      name es bs k
@@ -286,11 +298,12 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
       KindDuration  _ _   -> error "KindDuration should not be plotted"
       KindNone            -> error "KindNone should not be plotted"
 
+    edges  :: [(t,InEvent)] -> [(t,Edge)]
+    values :: [(t,InEvent)] -> [(t,Double)]
+    atoms  :: [(t,InEvent)] -> [(t,S.ByteString)]
     edges  es = [(t,e) | (t,InEdge  e) <- es]
     values es = [(t,v) | (t,InValue v) <- es]
     atoms  es = [(t,a) | (t,InAtom  a) <- es]
-
-    lag xs = xs `zip` tail xs
 
     ourPlotBars :: (BarsPlotValue a) => PlotBars t a
     ourPlotBars = plot_bars_spacing ^= BarsFixGap 0 0 $
@@ -298,15 +311,23 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
                   plot_bars_alignment ^= BarsLeft     $
                   defaultPlotBars
 
+    plotTrackCount :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Int
     plotTrackCount name es bs = layoutWithTitle (plotBars plot) name
-      where plot = plot_bars_values      ^= barsData $ 
-                   plot_bars_item_styles ^= [(solidFillStyle (opaque blue), Nothing)] $ 
+      where plot = plot_bars_values      ^= barsData $
+                   plot_bars_item_styles ^= [(solidFillStyle (opaque blue), Nothing)] $
                    ourPlotBars
+            barsData :: [(t,[Int])]
             barsData = [(t,[n]) | ((t,_),n) <- edges2bins bs t0 (edges es)]
 
+    plotTrackFreq  :: S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t Double
     plotTrackFreq  = plotTrackAtoms atoms2freqs
+
+    plotTrackHist  :: S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t Int
     plotTrackHist  = plotTrackAtoms atoms2hist
 
+    plotTrackAtoms :: (Num v, BarsPlotValue v) =>
+                      ([S.ByteString] -> [S.ByteString] -> [v]) ->
+                      S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t v
     plotTrackAtoms f name es bs k = layoutWithTitle (plotBars plot) name
       where plot = plot_bars_style       ^= k           $
                    plot_bars_values      ^= vals        $
@@ -318,14 +339,16 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
             as   = atoms es
             vs   = M.keys $ M.fromList $ [(a,()) | (_,a) <- as]
 
+    plotTrackEvent :: S.ByteString -> [(t,InEvent)] -> Layout1 t Status
     plotTrackEvent     name es       = layoutWithTitle (toPlot plot) name
-      where plot = plot_event_data           ^= edges2events (edges es) $ 
-                   plot_event_long_fillstyle ^= toFillStyle             $ 
-                   plot_event_label          ^= toLabel                 $ 
+      where plot = plot_event_data           ^= edges2events (edges es) $
+                   plot_event_long_fillstyle ^= toFillStyle             $
+                   plot_event_label          ^= toLabel                 $
                    defaultPlotEvent
             toFillStyle s = solidFillStyle . opaque $ fromMaybe lightgray (readColourName (statusColor s))
             toLabel     s = statusLabel s
 
+    plotTrackQuantile :: S.ByteString -> [(t,InEvent)] -> [Double] -> Delta t -> Layout1 t Double
     plotTrackQuantile  name es qs bs = layoutWithTitle (plotBars plot) name
       where plot = plot_bars_values  ^= toBars (byTimeBins (getQuantiles qs) bs t0 (values es)) $
                    plot_bars_item_styles ^= quantileStyles $
@@ -333,9 +356,13 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
                    ourPlotBars
             quantileStyles = none:(zip (map (solidFillStyle . opaque) colors) [Just $ solidLine 1 (opaque black) | i <- [0..n+1]])
             quantileTitles = [""]++[show p1++".."++show p2++"%" | (p1,p2) <- lag percents ]
-              where percents = map (floor . (*100)) $ [0]++qs++[1]
+              where
+                percents = map (floor . (*100.0)) $ [0.0] ++ qs ++ [1.0]
             n = length qs
-    
+
+    lag :: [a] -> [(a,a)]
+    lag xs = xs `zip` tail xs
+
     colors = cycle [green,blue,yellow,red,orange,brown,grey,purple,violet,lightblue]
 
     binTitles vs = [low]++[show v1++".."++show v2 | (v1,v2) <- lag vs]++[high]
@@ -367,20 +394,26 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
     toBars tvs = [(t,diffs vs) | (t,vs) <- tvs]
     diffs xs = zipWith (-) xs (0:xs)
 
+    plotLines :: S.ByteString -> [(t,Double)] -> Layout1 t Double
     plotLines name vs = layoutWithTitle (toPlot plot) name
       where plot = plot_lines_values ^= [vs] $ defaultPlotLines
 
+    plotTrackLines :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
     plotTrackLines name es = plotLines name (values es)
-    
+
+    plotTrackDots :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
     plotTrackDots  name es = layoutWithTitle (toPlot plot) name
-      where plot = plot_points_values ^= values es $ 
-                   plot_points_style  ^= hollowCircles 4 1 (opaque blue) $ 
+      where plot = plot_points_values ^= values es $
+                   plot_points_style  ^= hollowCircles 4 1 (opaque blue) $
                    defaultPlotPoints
 
+    plotTrackCumSum :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
     plotTrackCumSum name es = plotLines name $ scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) (values es)
 
+    plotTrackSum :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
     plotTrackSum name es bs = plotLines name $ byTimeBins sum bs t0 (values es)
 
+    layoutWithTitle :: (PlotValue a) => Plot t a -> S.ByteString -> Layout1 t a
     layoutWithTitle plot name =
         layout1_title ^= "" $
         layout1_plots ^= [Left plot] $
@@ -493,7 +526,7 @@ atoms2freqs as xs = map toFreq (atoms2hist as xs)
 
 zoom :: (TimeAxis t) => [(t, S.ByteString, InEvent)] -> Maybe t -> Maybe t -> [(t, S.ByteString, InEvent)]
 zoom events fromTime toTime = filter p events
-  where 
+  where
     p (t, _, _) = (maybe True (\ft -> t >= ft) fromTime) &&
                   (maybe True (\tt -> t <  tt) toTime)
 
@@ -541,7 +574,7 @@ showHelp = mapM_ putStrLn [ "",
   "1234 !B TEXT - at time 1234, pulse event B has occured with label TEXT",
   "1234 @B COLOR - at time 1234, the status of B became such that it is",
   "                appropriate to draw it with color COLOR :)",
-  "1234 =C VAL - at time 1234, parameter C had numeric value VAL (for example,",  
+  "1234 =C VAL - at time 1234, parameter C had numeric value VAL (for example,",
   "              HTTP response time)",
   "1234 =D `EVENT - at time 1234, event EVENT occured in process D (for",
   "                 example, HTTP response code)",
@@ -550,7 +583,7 @@ showHelp = mapM_ putStrLn [ "",
   "  'none' - do not plot this track",
   "  'event' is for event diagrams: activities are drawn like --[===]--- ,",
   "     pulse events like --|-- with a label over '|'",
-  "  'duration XXXX' - plot any kind of diagram over the *durations* of events",  
+  "  'duration XXXX' - plot any kind of diagram over the *durations* of events",
   "     on a track (delimited by > ... <), for example 'duration quantile",
   "     300 0.25,0.5,0.75' will plot these quantiles of durations of the",
   "     events. This is useful where your log looks like 'Started processing'",
@@ -559,7 +592,7 @@ showHelp = mapM_ putStrLn [ "",
   "  'duration[C] XXXX' - same as 'duration', but of a track's name we only",
   "     take the part before character C. For example, if you have processes",
   "     named 'MACHINE-PID' (i.e. UNIT027-8532) say 'begin something' / ",
-  "     'end something' and you're interested in the properties of per-machine",  
+  "     'end something' and you're interested in the properties of per-machine",
   "     durations, use duration[-].",
   "  'count N' is for activity counts: a histogram is drawn with granularity",
   "     of N time units, where the bin corresponding to [t..t+N) has value",
@@ -592,20 +625,24 @@ main = do
   mainWithArgs args
 mainWithArgs args = do
   when (null args || args == ["--help"]) $ showHelp >> exitSuccess
-  let conf = readConf args
-  let render = case (outFormat conf) of {
-      PNG    -> \c w h f -> const () `fmap` renderableToPNGFile c w h f;
-      PDF    -> renderableToPDFFile ;
-      PS     -> renderableToPSFile  ;
-      SVG    -> renderableToSVGFile ;
-#if HAVE_GTK      
-      Window -> \c w h f -> renderableToWindow c w h
-#endif      
-    }
-  case conf of
-    Conf{parseTime=parseTime, inFile=inFile, chartKindF=chartKindF, outFile=outFile, outResolution=outResolution, fromTime=fromTime, toTime=toTime} -> do
-      source <- readSource parseTime inFile
-      let source' = zoom source fromTime toTime
-      let chart = makeChart chartKindF source'
-      let (w,h) = outResolution
-      render chart w h outFile
+  case (readConf args) of
+    Conf conf -> do
+      let render = case (outFormat conf) of {
+          PNG    -> \c w h f -> const () `fmap` renderableToPNGFile c w h f;
+          PDF    -> renderableToPDFFile ;
+          PS     -> renderableToPSFile  ;
+          SVG    -> renderableToSVGFile ;
+#if HAVE_GTK
+          Window -> \c w h f -> renderableToWindow c w h
+#endif
+        }
+      case conf of
+        ConcreteConf {
+            parseTime=parseTime, inFile=inFile, chartKindF=chartKindF,
+            outFile=outFile, outResolution=outResolution,
+            fromTime=fromTime, toTime=toTime} -> do
+          source <- readSource parseTime inFile
+          let source' = zoom source fromTime toTime
+          let chart = makeChart chartKindF source'
+          let (w,h) = outResolution
+          render chart w h outFile

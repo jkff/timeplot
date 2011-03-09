@@ -1,42 +1,27 @@
-Name: timeplot
-Version: 0.2.17
-License: BSD3
-License-file: LICENSE
-Copyright: Eugene Kirpichov, 2009
-Author: Eugene Kirpichov <ekirpichov@gmail.com>
-Maintainer: Eugene Kirpichov <ekirpichov@gmail.com>
-Synopsis: A tool for visualizing time series from log files.
-Description: A tool for visualizing time series from log files. 
-  Reads an input file with events in different "tracks" and draws a diagram for 
-  each track, where a diagram may be one of 8 types. See --help for help and the 
-  homepage for a bigger description, examples and a tutorial. See presentation:
-  <http://www.slideshare.net/jkff/two-visualization-tools>
-Category: Graphics
-Cabal-Version: >= 1.6
-Build-Type: Simple
-Homepage: http://haskell.org/haskellwiki/Timeplot
-Source-repository head
-  type: git
-  location: git://github.com/jkff/timeplot
-
-flag splitbase
-  description: Choose the new smaller, split-up base package.
-
-flag gtk
-  description: Include the gtk-based ability to render to a window
-  default: False
-
+name: timeplot
+version: 0.2.18
+cabal-version: >=1.6
+build-type: Simple
+license: BSD3
+license-file: LICENSE
+copyright: Eugene Kirpichov, 2009
+maintainer: Eugene Kirpichov <ekirpichov@gmail.com>
+stability: stable
+homepage: http://haskell.org/haskellwiki/Timeplot
+synopsis: A tool for visualizing time series from log files.
+description: A tool for visualizing time series from log files.
+             Reads an input file with events in different "tracks" and draws a diagram for
+             each track, where a diagram may be one of several types. See --help for help and the
+             homepage for a bigger description, examples and a tutorial. See presentation:
+             <http://www.slideshare.net/jkff/two-visualization-tools>
+category: Graphics
+author: Eugene Kirpichov <ekirpichov@gmail.com>
+ 
 executable tplot
-  if flag(splitbase)
-    Build-Depends: base >= 3 && < 5
-  else
-    Build-Depends: base < 3
-
-  if flag(gtk)
-    cpp-options: -DHAVE_GTK=1
-  
-  Build-Depends: Chart >= 0.14, cairo, bytestring, bytestring-lexing, strptime >= 0.1.7, time, 
-                 containers, colour, data-accessor == 0.2.*, data-accessor-template >= 0.2.1.1 && < 0.3, 
-                 haskell98, regex-tdfa
-  Main-Is: Tools/TimePlot.hs
-  Other-Modules: Graphics.Rendering.Chart.Event
+    main-is: Tools/TimePlot.hs
+    buildable: True
+    other-modules: Graphics.Rendering.Chart.Event
+    build-depends: Chart >=0.14, base >=3 && <5, bytestring -any,
+                   bytestring-lexing -any, cairo -any, colour -any, containers -any,
+                   data-accessor ==0.2.*, data-accessor-template >=0.2.1.1 && <0.3,
+                   haskell98 -any, regex-tdfa -any, strptime >=0.1.7, time -any
