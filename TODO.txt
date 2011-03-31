@@ -1,0 +1,4 @@
+ - "share of sums" (e.g. share of different types of overhead)
+ - "share of counters" (e.g. share of number of cores currently processing each job)
+ - unify this stuff somehow
+
