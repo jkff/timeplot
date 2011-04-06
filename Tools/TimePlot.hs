@@ -241,9 +241,12 @@ readSource readTime f = (justs . map parseLine . blines) `fmap` (if f=="-" then 
         _   -> Nothing
 
 makeChart :: forall t . TimeAxis t =>
-             (S.ByteString -> [ChartKind t]) -> [(t, S.ByteString, InEvent)] -> Renderable ()
-makeChart chartKindF []                  = emptyRenderable
-makeChart chartKindF events0 = renderLayout1sStacked plots
+             (S.ByteString -> [ChartKind t]) -> 
+             [(t, S.ByteString, InEvent)] ->
+             Maybe t -> Maybe t ->
+             Renderable ()
+makeChart chartKindF []      minT maxT   = emptyRenderable
+makeChart chartKindF events0 minT maxT   = renderLayout1sStacked plots
   where
     events :: [(t, S.ByteString, InEvent)]
     events@((t0,_,_):_) = sortBy (comparing (\(t,_,_)-> t)) events0
@@ -260,7 +263,7 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
     durationPlots  = [ plotWithKind name k es | (name, (k,es)) <- M.toList durationTracks ]
       where
         durationTracks = M.fromListWith (\(ka,as) (kb,bs) -> (ka,mergeOn fst as bs)) components
-        components = [ (mn k, (sk, edges2durations (edges es)))
+        components = [ (mn k, (sk, edges2durations (edges es) minTime maxTime))
                      | (k, es) <- M.toList track2events,
                        kind <- chartKindF k,
                        Just (sk,mn) <- [case kind of {KindDuration mn sk -> Just (sk,mn) ; _ -> Nothing}]]
@@ -270,14 +273,14 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
           | f x <= f y = x : mergeOn f xs (y:ys)
           | otherwise  = y : mergeOn f (x:xs) ys
 
-    minTime, maxTime  :: t
-    (minTime,maxTime) = (head times, last times)
+    minTime = case minT of Just t -> t ; Nothing -> head times
+    maxTime = case maxT of Just t -> t ; Nothing -> last times
 
     times             :: [t]
     times             = sort $ [t | tes <- M.elems track2events, (t,_)<- tes]
 
     commonTimeAxis    :: AxisData t
-    commonTimeAxis    = autoAxis times
+    commonTimeAxis    = autoAxis ([minTime] ++ times ++ [maxTime])
 
     plotTrack :: S.ByteString -> ChartKind t -> [(t,InEvent)] -> AnyLayout1 t
     plotTrack name kind es = plotWithKind name kind es
@@ -317,7 +320,7 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
                    plot_bars_item_styles ^= [(solidFillStyle (opaque blue), Nothing)] $
                    ourPlotBars
             barsData :: [(t,[Int])]
-            barsData = [(t,[n]) | ((t,_),n) <- edges2bins bs t0 (edges es)]
+            barsData = [(t,[n]) | ((t,_),n) <- edges2bins bs minTime maxTime (edges es)]
 
     plotTrackFreq  :: S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t Double
     plotTrackFreq  = plotTrackAtoms atoms2freqs
@@ -341,7 +344,7 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
 
     plotTrackEvent :: S.ByteString -> [(t,InEvent)] -> Layout1 t Status
     plotTrackEvent     name es       = layoutWithTitle (toPlot plot) name
-      where plot = plot_event_data           ^= edges2events (edges es) $
+      where plot = plot_event_data           ^= edges2events (edges es) minTime maxTime $
                    plot_event_long_fillstyle ^= toFillStyle             $
                    plot_event_label          ^= toLabel                 $
                    defaultPlotEvent
@@ -424,11 +427,11 @@ makeChart chartKindF events0 = renderLayout1sStacked plots
         layout1_grid_last ^= True $
         defaultLayout1
 
-edges2durations :: forall t. (Ord t, HasDelta t) => [(t,Edge)] -> [(t,InEvent)]
-edges2durations tes = [(t2, InValue $ toSeconds (t2 `sub` t1) (undefined::t)) | LongEvent t1 t2 _ <- edges2events tes]
+edges2durations :: forall t. (Ord t, HasDelta t) => [(t,Edge)] -> t -> t -> [(t,InEvent)]
+edges2durations tes minTime maxTime = [(t2, InValue $ toSeconds (t2 `sub` t1) (undefined::t)) | LongEvent t1 t2 _ <- edges2events tes minTime maxTime]
 
-edges2events :: (Ord t) => [(t,Edge)] -> [Event t Status]
-edges2events tes = longs `merge` pulses
+edges2events :: (Ord t) => [(t,Edge)] -> t -> t -> [Event t Status]
+edges2events tes minTime maxTime = longs `merge` pulses
   where
     merge [] ps = ps
     merge ls [] = ls
@@ -437,35 +440,37 @@ edges2events tes = longs `merge` pulses
       | True = p:merge (l:ls) ps
     pulses = [PulseEvent t (Status {statusColor="", statusLabel=s}) | (t,Pulse s) <- tes]
     edges  = [(t,e) | (t,e) <- tes, case e of { Pulse _ -> False; _ -> True } ]
-    longs  = longs' (Status "" "") Nothing 0 (error "Unreachable") edges
+    longs  = longs' (Status "" "") Nothing 0 edges
       where
-        longs' s _         0 _ [] = []
-        longs' s (Just t0) _ t [] = [LongEvent t0 t s]
-        longs' s Nothing   0 _ ((t,Rise):tes) = longs' s (Just t)  1 t tes
-        longs' s Nothing   0 _ ((t,Fall):tes) = longs' s Nothing   0 t tes
-        longs' s (Just t0) n _ ((t,Rise):tes) = longs' s (Just t0) (n+1) t tes
-        longs' s (Just t0) 1 _ ((t,Fall):tes) = LongEvent t0 t s : longs' s Nothing 0 t tes
-        longs' s (Just t0) n _ ((t,Fall):tes) = longs' s (Just t0) (n-1) t tes
-        longs' s Nothing   0 _ ((t,SetTo s'):tes) = longs' s' (Just t) 1 t tes
-        longs' s (Just t0) n _ ((t,SetTo s'):tes) = LongEvent t0 t s : longs' s' (Just t) n t tes
+        longs' s _         0 [] = []
+        longs' s (Just t0) _ [] = [LongEvent t0 maxTime s]
+        longs' s Nothing   0 ((t,Rise):tes) = longs' s (Just t)  1 tes
+        longs' s Nothing   0 ((t,Fall):tes) = longs' s Nothing   0 tes
+        longs' s (Just t0) n ((t,Rise):tes) = longs' s (Just t0) (n+1) tes
+        longs' s (Just t0) 1 ((t,Fall):tes) = LongEvent t0 t s : longs' s Nothing 0 tes
+        longs' s (Just t0) n ((t,Fall):tes) = longs' s (Just t0) (n-1) tes
+        longs' s Nothing   0 ((t,SetTo s'):tes) = longs' s' (Just t) 1 tes
+        longs' s (Just t0) n ((t,SetTo s'):tes) = LongEvent t0 t s : longs' s' (Just t) n tes
 
-edges2bins :: (Ord t,HasDelta t) => Delta t -> t -> [(t,Edge)] -> [((t,t), Int)]
-edges2bins binSize t0 es = gather 0 0 0 es $ iterate (add binSize) t0
+edges2bins :: (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,Edge)] -> [((t,t), Int)]
+edges2bins binSize minTime maxTime es = gather 0 0 0 es maxTime $ iterate (add binSize) minTime
   where
-    gather :: (Ord t) => Int -> Int -> Int -> [(t,Edge)] -> [t] -> [((t,t), Int)]
-    gather 0 _ _ [] (t1:t2:ts) = []
-    gather n _ _ [] (t1:t2:ts) = [((t1,t2),n)]
-    gather nmax nopen npulse ((t,e):tes) (t1:t2:ts)
+    gather :: (Ord t) => Int -> Int -> Int -> [(t,Edge)] -> t -> [t] -> [((t,t), Int)]
+    gather 0 _ _ [] maxTime (t1:t2:ts) = []
+    gather n nopen npulse [] maxTime (t1:t2:ts) = if t2 <= maxTime 
+                                                  then ((t1,t2),n):gather nopen nopen npulse [] maxTime (t2:ts) 
+                                                  else []
+    gather nmax nopen npulse ((t,e):tes) maxTime (t1:t2:ts)
       | t<t1 = error "Times are not in ascending order"
-      | t>=t2 = ((t1,t2),nmax):gather nopen nopen 0 ((t,e):tes) (t2:ts)
-    gather nmax nopen npulse ((t,Rise ):tes)   (t1:t2:ts)
-      = gather (nmax `max` (nopen+npulse+1)) (nopen+1) npulse     tes (t1:t2:ts)
-    gather nmax nopen npulse ((t,Fall ):tes)   (t1:t2:ts)
-      = gather nmax                          (nopen-1) npulse     tes (t1:t2:ts)
-    gather nmax nopen npulse ((t,Pulse _):tes) (t1:t2:ts)
-      = gather (nmax `max` (nopen+npulse+1)) nopen    (npulse+1)  tes (t1:t2:ts)
-    gather nmax nopen npulse ((t,SetTo s):tes) (t1:t2:ts)
-      = gather nmax                          nopen     npulse     tes (t1:t2:ts)
+      | t>=t2 = ((t1,t2),nmax):gather nopen nopen 0 ((t,e):tes) maxTime (t2:ts)
+    gather nmax nopen npulse ((t,Rise ):tes) maxTime (t1:t2:ts)
+      = gather (nmax `max` (nopen+npulse+1)) (nopen+1) npulse     tes maxTime (t1:t2:ts)
+    gather nmax nopen npulse ((t,Fall ):tes) maxTime (t1:t2:ts)
+      = gather nmax                          (nopen-1) npulse     tes maxTime (t1:t2:ts)
+    gather nmax nopen npulse ((t,Pulse _):tes) maxTime (t1:t2:ts)
+      = gather (nmax `max` (nopen+npulse+1)) nopen    (npulse+1)  tes maxTime (t1:t2:ts)
+    gather nmax nopen npulse ((t,SetTo s):tes) maxTime (t1:t2:ts)
+      = gather nmax                          nopen     npulse     tes maxTime (t1:t2:ts)
 
 values2timeBins :: (Ord t) => [t] -> [(t,a)] -> [[a]]
 values2timeBins (t1:t2:ts) []          = []
@@ -643,6 +648,6 @@ mainWithArgs args = do
             fromTime=fromTime, toTime=toTime} -> do
           source <- readSource parseTime inFile
           let source' = zoom source fromTime toTime
-          let chart = makeChart chartKindF source'
+          let chart = makeChart chartKindF source'  fromTime toTime
           let (w,h) = outResolution
           render chart w h outFile
