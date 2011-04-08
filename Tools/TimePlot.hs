@@ -73,6 +73,7 @@ class HasDelta t where
   -- figure out which 't' we're speaking of)
   toSeconds :: Delta t -> t -> Double
   fromSeconds :: Double -> t -> Delta t
+  showDelta :: t -> t -> String
 
 instance HasDelta Double where
   type Delta Double = Double
@@ -80,6 +81,7 @@ instance HasDelta Double where
   sub t2 t1 = t2 - t1
   toSeconds d _ = d
   fromSeconds d _ = d
+  showDelta a b = show (a - b)
 
 instance HasDelta LocalTime where
   type Delta LocalTime = NominalDiffTime
@@ -87,6 +89,20 @@ instance HasDelta LocalTime where
   sub t2 t1 = diffUTCTime (localTimeToUTC utc t2) (localTimeToUTC utc t1)
   toSeconds d _ = fromIntegral (truncate (1000000*d)) / 1000000
   fromSeconds d _ = fromRational (toRational d)
+  showDelta t1 t2
+    | ts0 < 0.001 = "0"
+    | tm < 1 = showsPrec 3 s "s"
+    | th < 1 = show m ++ "m" ++ (if s<1 then "" else (show (floor s) ++ "s"))
+    | d  < 1 = show h ++ "h" ++ (if m<1 then "" else (show m ++ "m"))
+    | True   = show d ++ "d" ++ (if h<1 then "" else (show h ++ "h"))
+    where ts0 = toSeconds (t1 `sub` t2) t1
+          ts = if ts0 < 60 then ts0 else fromIntegral (round ts0)
+          tm = floor (ts / 60) :: Int
+          th = tm `div` 60 :: Int
+          s = ts - 60 * fromIntegral tm :: Double
+          m = tm - 60 * th :: Int
+          h = th - 24 * d :: Int
+          d = h `div` 24 :: Int
 
 instance Read NominalDiffTime where
   readsPrec n s = [(fromSeconds i (undefined::LocalTime), s') | (i,s') <- readsPrec n s]
@@ -119,6 +135,7 @@ data ConcreteConf t =
 
     fromTime      :: Maybe t,
     toTime        :: Maybe t,
+    transformLabel :: t -> String -> String,
 
     outFile       :: FilePath,
     outFormat     :: OutFormat,
@@ -143,7 +160,8 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
 
     readConf' :: forall t. (TimeAxis t) => (B.ByteString -> Maybe (t, B.ByteString)) -> ConcreteConf t
     readConf' parseTime = ConcreteConf {inFile=inFile, outFile=outFile, outFormat=outFormat, outResolution=outRes,
-                      chartKindF=chartKindF, parseTime=parseTime, fromTime=fromTime, toTime=toTime}
+                      chartKindF=chartKindF, parseTime=parseTime, fromTime=fromTime, toTime=toTime,
+                      transformLabel=transformLabel}
       where
         inFile      = single "input file"  "-if" (error "No input file (-if) specified")
         outFile     = single "output file" "-o"  (error "No output file (-o) specified (or have you specified '-of x' and built without --flags=gtk ?)")
@@ -170,6 +188,11 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
 
         fromTime    = fst `fmap` (parseTime . B.pack $ single "minimum time (inclusive)" "-fromTime" "")
         toTime      = fst `fmap` (parseTime . B.pack $ single "maximum time (exclusive)" "-toTime"   "")
+        baseTime    = fst `fmap` (parseTime . B.pack $ single "base time"                "-baseTime"   "")
+
+        transformLabel t s = case baseTime of
+          Nothing -> s
+          Just bt -> showDelta t bt
 
         parseKind ["count",   n  ] = KindCount     {binSize=read n}
         parseKind ["freq",    n  ] = KindFreq      {binSize=read n,style=BarsClustered}
@@ -244,9 +267,10 @@ makeChart :: forall t . TimeAxis t =>
              (S.ByteString -> [ChartKind t]) -> 
              [(t, S.ByteString, InEvent)] ->
              Maybe t -> Maybe t ->
+             (t -> String -> String) -> 
              Renderable ()
-makeChart chartKindF []      minT maxT   = emptyRenderable
-makeChart chartKindF events0 minT maxT   = renderLayout1sStacked plots
+makeChart chartKindF []      minT maxT transformLabel = emptyRenderable
+makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked plots
   where
     events :: [(t, S.ByteString, InEvent)]
     events@((t0,_,_):_) = sortBy (comparing (\(t,_,_)-> t)) events0
@@ -280,7 +304,9 @@ makeChart chartKindF events0 minT maxT   = renderLayout1sStacked plots
     times             = sort $ [t | tes <- M.elems track2events, (t,_)<- tes]
 
     commonTimeAxis    :: AxisData t
-    commonTimeAxis    = autoAxis ([minTime] ++ times ++ [maxTime])
+    commonTimeAxis    = transformLabels $ autoAxis ([minTime] ++ times ++ [maxTime])
+      where
+        transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
 
     plotTrack :: S.ByteString -> ChartKind t -> [(t,InEvent)] -> AnyLayout1 t
     plotTrack name kind es = plotWithKind name kind es
@@ -541,7 +567,7 @@ showHelp = mapM_ putStrLn [ "",
   "Usage: tplot [-o OFILE] [-of {png|pdf|ps|svg|x}] [-or 640x480]",
   "             -if IFILE [-tf TF] ",
   "             [{+|-}k Pat1 Kind1 {+|-}k Pat2 Kind2 ...] [{+|-}dk KindN]",
-  "             [-fromTime TIME] [-toTime TIME]",
+  "             [-fromTime TIME] [-toTime TIME] [-baseTime TIME]",
   "  -o  OFILE  - output file (required if -of is not x)",
   "  -of        - output format (x means draw result in a window, default:",
   "               extension of -o); x is only available if you installed",
@@ -567,10 +593,12 @@ showHelp = mapM_ putStrLn [ "",
   "               matched: a track is drawn acc. to all matching +k, to +dk",
   "               AND ALSO to the first matching -k, or -dk if none of -k",
   "               match",
-  "  -fromTime  - filter records whose time is >= this time (formatted",
-  "               according to -tf)",
-  "  -toTime    - filter records whose time is <  this time (formatted",
-  "               according to -tf)",
+  "  -fromTime  - filter records whose time is >= this time",
+  "               (formatted according to -tf)",
+  "  -toTime    - filter records whose time is <  this time",
+  "               (formatted according to -tf)",
+  "  -baseTime  - display time difference with this value instead of absolute time",
+  "               (formatted according to -tf)",
   "",
   "Input format: lines of the following form:",
   "1234 >A - at time 1234, activity A has begun",
@@ -645,9 +673,9 @@ mainWithArgs args = do
         ConcreteConf {
             parseTime=parseTime, inFile=inFile, chartKindF=chartKindF,
             outFile=outFile, outResolution=outResolution,
-            fromTime=fromTime, toTime=toTime} -> do
+            fromTime=fromTime, toTime=toTime, transformLabel=transformLabel} -> do
           source <- readSource parseTime inFile
           let source' = zoom source fromTime toTime
-          let chart = makeChart chartKindF source'  fromTime toTime
+          let chart = makeChart chartKindF source' fromTime toTime transformLabel
           let (w,h) = outResolution
           render chart w h outFile
