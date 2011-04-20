@@ -229,7 +229,9 @@ readSource :: (Show t) => (B.ByteString -> Maybe (t,B.ByteString)) -> FilePath -
 readSource readTime f = (justs . map parseLine . blines) `fmap` (if f=="-" then B.getContents else B.readFile f)
   where
     justs xs = [x | Just x <- xs]
-    blines   = B.split '\n'
+    blines   = map pruneLF . B.split '\n'
+    pruneLF b | not (B.null b) && (B.last b == '\r') = B.init b
+              | otherwise                            = b
     strict   = S.concat . B.toChunks
     parseLine s = do
       (t, s') <- readTime s
