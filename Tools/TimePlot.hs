@@ -54,9 +54,9 @@ unitStatusAxis = AxisData {
 
 data Edge = Rise | Fall | Pulse {pulseLabel :: String} | SetTo Status deriving (Eq,Show)
 
-data InEvent = InEdge  Edge
-             | InValue Double
-             | InAtom  S.ByteString
+data InEvent = InEdge  {evt_track :: S.ByteString, evt_edge :: Edge}
+             | InValue {evt_track :: S.ByteString, evt_value :: Double}
+             | InAtom  {evt_track :: S.ByteString, evt_atom :: S.ByteString}
              deriving (Show)
 
 data OutFormat = PNG | PDF | PS | SVG
@@ -225,7 +225,7 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
 getArg :: String -> Int -> [String] -> [[String]]
 getArg name arity args = [take arity as | (t:as) <- tails args, t==name]
 
-readSource :: (Show t) => (B.ByteString -> Maybe (t,B.ByteString)) -> FilePath -> IO [(t, S.ByteString, InEvent)]
+readSource :: (Show t) => (B.ByteString -> Maybe (t,B.ByteString)) -> FilePath -> IO [(t, InEvent)]
 readSource readTime f = (justs . map parseLine . blines) `fmap` (if f=="-" then B.getContents else B.readFile f)
   where
     justs xs = [x | Just x <- xs]
@@ -238,19 +238,19 @@ readSource readTime f = (justs . map parseLine . blines) `fmap` (if f=="-" then 
       (_, s'') <- B.uncons s'
       (c,rest) <- B.uncons s''
       case c of
-        '>' -> return (t, strict rest, InEdge Rise )
-        '<' -> return (t, strict rest, InEdge Fall )
+        '>' -> return (t, InEdge (strict rest) Rise )
+        '<' -> return (t, InEdge (strict rest) Fall )
         '!' -> do
           let (track, val') = B.break (==' ') rest
           if B.null val'
-            then return (t, strict track, InEdge (Pulse ""))
+            then return (t, InEdge (strict track) (Pulse ""))
             else do
               (_,val) <- B.uncons val'
-              return (t, strict track, InEdge . Pulse . B.unpack $ val)
+              return (t, InEdge (strict track) . Pulse . B.unpack $ val)
         '@' -> do
           let (track, val') = B.break (==' ') rest
           (_,val) <- B.uncons val'
-          return (t, strict track, InEdge $ SetTo (Status {statusColor = B.unpack $ val, statusLabel = ""}))
+          return (t, InEdge (strict track) $ SetTo (Status {statusColor = B.unpack $ val, statusLabel = ""}))
         '=' -> do
           let (track, val') = B.break (==' ') rest
           (_,val) <- B.uncons val'
@@ -259,26 +259,26 @@ readSource readTime f = (justs . map parseLine . blines) `fmap` (if f=="-" then 
             else do
               case B.head val of
                 '`' -> do
-                  return (t, strict track, InAtom (strict $ B.tail val))
+                  return (t, InAtom (strict track) (strict $ B.tail val))
                 _   -> do
                   (v,_  ) <- readDouble val
-                  return (t, strict track, InValue v)
+                  return (t, InValue (strict track) v)
         _   -> Nothing
 
 makeChart :: forall t . TimeAxis t =>
              (S.ByteString -> [ChartKind t]) -> 
-             [(t, S.ByteString, InEvent)] ->
+             [(t, InEvent)] ->
              Maybe t -> Maybe t ->
              (t -> String -> String) -> 
              Renderable ()
 makeChart chartKindF []      minT maxT transformLabel = emptyRenderable
 makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked plots
   where
-    events :: [(t, S.ByteString, InEvent)]
-    events@((t0,_,_):_) = sortBy (comparing (\(t,_,_)-> t)) events0
+    events :: [(t, InEvent)]
+    events@((t0,_):_) = sortBy (comparing (\(t,_)-> t)) events0
 
     track2events :: M.Map S.ByteString [(t, InEvent)]
-    track2events = reverse `fmap` foldl' insert M.empty [(s, (t, e)) | (t, s, e) <- events]
+    track2events = reverse `fmap` foldl' insert M.empty [(evt_track e, x) | x@(t, e) <- events]
       where insert m (s, r) = M.alter (Just . maybe [r] (r:)) s m
 
     plots          = [ plotTrack k kind es | (k, es) <- M.toList track2events,
@@ -310,7 +310,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
       where
         transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
 
-    plotTrack :: S.ByteString -> ChartKind t -> [(t,InEvent)] -> AnyLayout1 t
+    plotTrack :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
     plotTrack name kind es = plotWithKind name kind es
 
     plotWithKind :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
@@ -329,12 +329,12 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
       KindDuration  _ _   -> error "KindDuration should not be plotted"
       KindNone            -> error "KindNone should not be plotted"
 
-    edges  :: [(t,InEvent)] -> [(t,Edge)]
-    values :: [(t,InEvent)] -> [(t,Double)]
-    atoms  :: [(t,InEvent)] -> [(t,S.ByteString)]
-    edges  es = [(t,e) | (t,InEdge  e) <- es]
-    values es = [(t,v) | (t,InValue v) <- es]
-    atoms  es = [(t,a) | (t,InAtom  a) <- es]
+    edges  :: [(t,InEvent)] -> [(t,S.ByteString,Edge)]
+    values :: [(t,InEvent)] -> [(t,S.ByteString,Double)]
+    atoms  :: [(t,InEvent)] -> [(t,S.ByteString,S.ByteString)]
+    edges  es = [(t,s,e) | (t,InEdge  s e) <- es]
+    values es = [(t,s,v) | (t,InValue s v) <- es]
+    atoms  es = [(t,s,a) | (t,InAtom  s a) <- es]
 
     ourPlotBars :: (BarsPlotValue a) => PlotBars t a
     ourPlotBars = plot_bars_spacing ^= BarsFixGap 0 0 $
@@ -348,6 +348,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                    plot_bars_item_styles ^= [(solidFillStyle (opaque blue), Nothing)] $
                    ourPlotBars
             barsData :: [(t,[Int])]
+            -- TODO: Multiple tracks
             barsData = [(t,[n]) | ((t,_),n) <- edges2bins bs minTime maxTime (edges es)]
 
     plotTrackFreq  :: S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t Double
@@ -367,24 +368,28 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                    ourPlotBars
             itemStyles = none:[(solidFillStyle (opaque c), Nothing) | c <- colors]
             vals = byTimeBins ((0:).f vs) bs t0 as
-            as   = atoms es
+            -- TODO Multiple tracks
+            as   = [(t,a) | (t,_,a) <- atoms es]
             vs   = M.keys $ M.fromList $ [(a,()) | (_,a) <- as]
 
     plotTrackEvent :: S.ByteString -> [(t,InEvent)] -> Layout1 t Status
     plotTrackEvent     name es       = layoutWithTitle (toPlot plot) name
-      where plot = plot_event_data           ^= edges2events (edges es) minTime maxTime $
+      where plot = plot_event_data           ^= dropTrack (edges2events (edges es) minTime maxTime) $
                    plot_event_long_fillstyle ^= toFillStyle             $
                    plot_event_label          ^= toLabel                 $
                    defaultPlotEvent
+            dropTrack = map snd
             toFillStyle s = solidFillStyle . opaque $ fromMaybe lightgray (readColourName (statusColor s))
             toLabel     s = statusLabel s
 
     plotTrackQuantile :: S.ByteString -> [(t,InEvent)] -> [Double] -> Delta t -> Layout1 t Double
     plotTrackQuantile  name es qs bs = layoutWithTitle (plotBars plot) name
-      where plot = plot_bars_values  ^= toBars (byTimeBins (getQuantiles qs) bs t0 (values es)) $
+      where plot = plot_bars_values  ^= toBars (byTimeBins (getQuantiles qs) bs t0 vs) $
                    plot_bars_item_styles ^= quantileStyles $
                    plot_bars_titles  ^= quantileTitles $
                    ourPlotBars
+            -- TODO Multiple tracks
+            vs = [(t,v) | (t,_,v) <- values es]
             quantileStyles = none:(zip (map (solidFillStyle . opaque) colors) [Just $ solidLine 1 (opaque black) | i <- [0..n+1]])
             quantileTitles = [""]++[show p1++".."++show p2++"%" | (p1,p2) <- lag percents ]
               where
@@ -405,11 +410,14 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
 
     plotTrackBinFreqs  name es vs bs = plotTrackBars vals (binTitles vs) name (binColor n)
       where
-        vals = byTimeBins ((0:).values2binFreqs  vs) bs t0 (values es)
+        vals = byTimeBins ((0:).values2binFreqs  vs) bs t0 tvs
         n    = length vs
+        -- TODO Multiple tracks
+        tvs  = [(t,v) | (t,_,v) <- values es]
     plotTrackBinHist   name es vs bs = plotTrackBars vals (binTitles vs) name (binColor n)
       where
-        vals = byTimeBins ((0:).values2binHist vs) bs t0 (values es)
+        vals = byTimeBins ((0:).values2binHist vs) bs t0 tvs
+        tvs  = [(t,v) | (t,_,v) <- values es]
         n    = length vs
 
     plotTrackBars :: (BarsPlotValue a) => [(t,[a])] -> [String] -> S.ByteString -> (Int -> AlphaColour Double) -> Layout1 t a
@@ -430,19 +438,25 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
       where plot = plot_lines_values ^= [vs] $ defaultPlotLines
 
     plotTrackLines :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
-    plotTrackLines name es = plotLines name (values es)
+    plotTrackLines name es = plotLines name vs
+      -- TODO Multiple tracks
+      where vs = [(t,v) | (t,_,v) <- values es]
 
     plotTrackDots :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
     plotTrackDots  name es = layoutWithTitle (toPlot plot) name
-      where plot = plot_points_values ^= values es $
+      where plot = plot_points_values ^= vs $
                    plot_points_style  ^= hollowCircles 4 1 (opaque blue) $
                    defaultPlotPoints
+            -- TODO Multiple tracks
+            vs   = [(t,v) | (t,_,v) <- values es]
 
     plotTrackCumSum :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
-    plotTrackCumSum name es = plotLines name $ scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) (values es)
+    plotTrackCumSum name es = plotLines name $ scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) vs
+      where vs = [(t,v) | (t,_,v) <- values es]
 
     plotTrackSum :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
-    plotTrackSum name es bs = plotLines name $ byTimeBins sum bs t0 (values es)
+    plotTrackSum name es bs = plotLines name $ byTimeBins sum bs t0 vs
+      where vs = [(t,v) | (t,_,v) <- values es]
 
     layoutWithTitle :: (PlotValue a) => Plot t a -> S.ByteString -> Layout1 t a
     layoutWithTitle plot name =
@@ -455,49 +469,51 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
         layout1_grid_last ^= True $
         defaultLayout1
 
-edges2durations :: forall t. (Ord t, HasDelta t) => [(t,Edge)] -> t -> t -> [(t,InEvent)]
-edges2durations tes minTime maxTime = [(t2, InValue $ toSeconds (t2 `sub` t1) (undefined::t)) | LongEvent t1 t2 _ <- edges2events tes minTime maxTime]
+edges2durations :: forall t. (Ord t, HasDelta t) => [(t,S.ByteString,Edge)] -> t -> t -> [(t,InEvent)]
+edges2durations tes minTime maxTime = [(t2, InValue s $ toSeconds (t2 `sub` t1) (undefined::t)) | (s,LongEvent t1 t2 _) <- edges2events tes minTime maxTime]
 
-edges2events :: (Ord t) => [(t,Edge)] -> t -> t -> [Event t Status]
+edges2events :: (Ord t) => [(t,S.ByteString,Edge)] -> t -> t -> [(S.ByteString,Event t Status)]
 edges2events tes minTime maxTime = longs `merge` pulses
   where
     merge [] ps = ps
     merge ls [] = ls
-    merge (l@(LongEvent t1 t2 _):ls) (p@(PulseEvent t _):ps)
+    merge (l@(sl, LongEvent t1 t2 _):ls) (p@(sp, PulseEvent t _):ps)
       | t1<t = l:merge ls (p:ps)
       | True = p:merge (l:ls) ps
-    pulses = [PulseEvent t (Status {statusColor="", statusLabel=s}) | (t,Pulse s) <- tes]
-    edges  = [(t,e) | (t,e) <- tes, case e of { Pulse _ -> False; _ -> True } ]
+    pulses = [(s,PulseEvent t (Status {statusColor="", statusLabel=st})) | (t,s,Pulse st) <- tes]
+    edges  = [(t,s,e) | (t,s,e) <- tes, case e of { Pulse _ -> False; _ -> True } ]
     longs  = longs' (Status "" "") Nothing 0 edges
       where
-        longs' s _         0 [] = []
-        longs' s (Just t0) _ [] = [LongEvent t0 maxTime s]
-        longs' s Nothing   0 ((t,Rise):tes) = longs' s (Just t)  1 tes
-        longs' s Nothing   0 ((t,Fall):tes) = longs' s Nothing   0 tes
-        longs' s (Just t0) n ((t,Rise):tes) = longs' s (Just t0) (n+1) tes
-        longs' s (Just t0) 1 ((t,Fall):tes) = LongEvent t0 t s : longs' s Nothing 0 tes
-        longs' s (Just t0) n ((t,Fall):tes) = longs' s (Just t0) (n-1) tes
-        longs' s Nothing   0 ((t,SetTo s'):tes) = longs' s' (Just t) 1 tes
-        longs' s (Just t0) n ((t,SetTo s'):tes) = LongEvent t0 t s : longs' s' (Just t) n tes
+        longs' st _              0 [] = []
+        longs' st (Just (t0,s0)) _ [] = [(s0,LongEvent t0 maxTime st)]
+        longs' st Nothing        0 ((t,s,Rise):tes) = longs' st (Just (t,s))  1 tes
+        longs' st Nothing        0 ((t,s,Fall):tes) = longs' st Nothing   0 tes
+        longs' st (Just (t0,s0)) n ((t,s,Rise):tes) = longs' st (Just (t0,s0)) (n+1) tes
+        longs' st (Just (t0,s0)) 1 ((t,s,Fall):tes) = (s0,LongEvent t0 t st) : longs' st Nothing 0 tes
+        longs' st (Just (t0,s0)) n ((t,s,Fall):tes) = longs' st (Just (t0,s0)) (n-1) tes
+        longs' st Nothing        0 ((t,s,SetTo st'):tes) = longs' st' (Just (t,s)) 1 tes
+        longs' st (Just (t0,s0)) n ((t,s,SetTo st'):tes) = (s0,LongEvent t0 t st) : longs' st' (Just (t,s)) n tes
 
-edges2bins :: (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,Edge)] -> [((t,t), Int)]
+-- TODO Multiple tracks
+-- edges2bins :: (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,S.ByteString,Edge)] -> [((t,t), [(S.ByteString,Int)])]
+edges2bins :: (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,S.ByteString,Edge)] -> [((t,t), Int)]
 edges2bins binSize minTime maxTime es = gather 0 0 0 es maxTime $ iterate (add binSize) minTime
   where
-    gather :: (Ord t) => Int -> Int -> Int -> [(t,Edge)] -> t -> [t] -> [((t,t), Int)]
+    gather :: (Ord t) => Int -> Int -> Int -> [(t,S.ByteString,Edge)] -> t -> [t] -> [((t,t), Int)]
     gather 0 _ _ [] maxTime (t1:t2:ts) = []
     gather n nopen npulse [] maxTime (t1:t2:ts) = if t2 <= maxTime 
                                                   then ((t1,t2),n):gather nopen nopen npulse [] maxTime (t2:ts) 
                                                   else []
-    gather nmax nopen npulse ((t,e):tes) maxTime (t1:t2:ts)
+    gather nmax nopen npulse ((t,n,e):tes) maxTime (t1:t2:ts)
       | t<t1 = error "Times are not in ascending order"
-      | t>=t2 = ((t1,t2),nmax):gather nopen nopen 0 ((t,e):tes) maxTime (t2:ts)
-    gather nmax nopen npulse ((t,Rise ):tes) maxTime (t1:t2:ts)
+      | t>=t2 = ((t1,t2),nmax):gather nopen nopen 0 ((t,n,e):tes) maxTime (t2:ts)
+    gather nmax nopen npulse ((t,_,Rise ):tes) maxTime (t1:t2:ts)
       = gather (nmax `max` (nopen+npulse+1)) (nopen+1) npulse     tes maxTime (t1:t2:ts)
-    gather nmax nopen npulse ((t,Fall ):tes) maxTime (t1:t2:ts)
+    gather nmax nopen npulse ((t,_,Fall ):tes) maxTime (t1:t2:ts)
       = gather nmax                          (nopen-1) npulse     tes maxTime (t1:t2:ts)
-    gather nmax nopen npulse ((t,Pulse _):tes) maxTime (t1:t2:ts)
+    gather nmax nopen npulse ((t,_,Pulse _):tes) maxTime (t1:t2:ts)
       = gather (nmax `max` (nopen+npulse+1)) nopen    (npulse+1)  tes maxTime (t1:t2:ts)
-    gather nmax nopen npulse ((t,SetTo s):tes) maxTime (t1:t2:ts)
+    gather nmax nopen npulse ((t,_,SetTo s):tes) maxTime (t1:t2:ts)
       = gather nmax                          nopen     npulse     tes maxTime (t1:t2:ts)
 
 values2timeBins :: (Ord t) => [t] -> [(t,a)] -> [[a]]
@@ -557,11 +573,11 @@ atoms2freqs as xs = map toFreq (atoms2hist as xs)
     n = length xs
     toFreq = if n==0 then const 0 else (\k -> fromIntegral k/fromIntegral n)
 
-zoom :: (TimeAxis t) => [(t, S.ByteString, InEvent)] -> Maybe t -> Maybe t -> [(t, S.ByteString, InEvent)]
+zoom :: (TimeAxis t) => [(t, InEvent)] -> Maybe t -> Maybe t -> [(t, InEvent)]
 zoom events fromTime toTime = filter p events
   where
-    p (t, _, _) = (maybe True (\ft -> t >= ft) fromTime) &&
-                  (maybe True (\tt -> t <  tt) toTime)
+    p (t, _) = (maybe True (\ft -> t >= ft) fromTime) &&
+               (maybe True (\tt -> t <  tt) toTime)
 
 showHelp = mapM_ putStrLn [ "",
   "tplot - a tool for drawing timing diagrams.",
