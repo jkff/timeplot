@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables, TypeFamilies, FlexibleContexts, GADTs, CPP #-}
+{-# LANGUAGE ScopedTypeVariables, TypeFamilies, FlexibleContexts, GADTs, CPP, ParallelListComp #-}
 module Main where
 
 import Control.Monad
@@ -117,7 +117,9 @@ instance TimeAxis Double
 
 instance TimeAxis LocalTime
 
-data (TimeAxis t) => ChartKind t = KindEvent
+data SumSubtrackStyle = SumStacked | SumOverlayed
+
+data ChartKind t = KindEvent
                | KindDuration  { subKind :: ChartKind t }
                | KindWithin    { mapName :: S.ByteString -> S.ByteString, subKind :: ChartKind t }
                | KindACount    { binSize :: Delta t }
@@ -129,8 +131,8 @@ data (TimeAxis t) => ChartKind t = KindEvent
                | KindHistogram { binSize :: Delta t, style :: PlotBarsStyle }
                | KindLines
                | KindDots
-               | KindCumSum
-               | KindSum       { binSize :: Delta t }
+               | KindCumSum    { subtrackStyle :: SumSubtrackStyle }
+               | KindSum       { binSize :: Delta t, subtrackStyle :: SumSubtrackStyle }
                | KindNone
 
 data ConcreteConf t =
@@ -209,11 +211,13 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
         parseKind ["event"       ] = KindEvent
         parseKind ["quantile",b,q] = KindQuantile  {binSize=read b, quantiles=read ("["++q++"]")}
         parseKind ["binf",    b,q] = KindBinFreq   {binSize=read b, delims   =read ("["++q++"]")}
-        parseKind ["binh",    b,q] = KindBinHist  {binSize=read b, delims   =read ("["++q++"]")}
+        parseKind ["binh",    b,q] = KindBinHist   {binSize=read b, delims   =read ("["++q++"]")}
         parseKind ["lines"       ] = KindLines
         parseKind ["dots"        ] = KindDots
-        parseKind ["cumsum"      ] = KindCumSum
-        parseKind ["sum",     b  ] = KindSum       {binSize=read b}
+        parseKind ["cumsum"      ] = KindCumSum    {subtrackStyle=SumStacked}
+        parseKind ["cumsum",  s  ] = KindCumSum    {subtrackStyle=parseSubtrackStyle s}
+        parseKind ["sum",     b  ] = KindSum       {binSize=read b, subtrackStyle=SumStacked}
+        parseKind ["sum",     b,s] = KindSum       {binSize=read b, subtrackStyle=parseSubtrackStyle s}
         parseKind ("duration":ws)  = KindDuration  {subKind=parseKind ws}
         parseKind (('w':'i':'t':'h':'i':'n':'[':sep:"]"):ws)
                                    = KindWithin    {subKind=parseKind ws, mapName = fst . S.break (==sep)}
@@ -225,6 +229,9 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
 
         parseStyle "stacked"   = BarsStacked
         parseStyle "clustered" = BarsClustered
+
+        parseSubtrackStyle "stacked"   = SumStacked
+        parseSubtrackStyle "overlayed" = SumOverlayed
 
 
 -- getArg "-a" 2 ["-b", "1", "-a", "2", "q", "r", "-c", "3", "-a", "x"] =
@@ -332,8 +339,8 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
       KindBinHist   bs vs -> withAnyOrdinate $ plotTrackBinHist   name es vs bs
       KindLines           -> withAnyOrdinate $ plotTrackLines     name es
       KindDots            -> withAnyOrdinate $ plotTrackDots      name es
-      KindSum       bs    -> withAnyOrdinate $ plotTrackSum       name es bs
-      KindCumSum          -> withAnyOrdinate $ plotTrackCumSum    name es
+      KindSum       bs ss -> withAnyOrdinate $ plotTrackSum       name es bs ss
+      KindCumSum    ss    -> withAnyOrdinate $ plotTrackCumSum    name es ss
       KindDuration  sk    -> plotWithKind       name sk (edges2durations (edges es) minTime maxTime)
       KindWithin    _ _   -> error "KindDuration should not be plotted"
       KindNone            -> error "KindNone should not be plotted"
@@ -352,7 +359,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                   defaultPlotBars
 
     plotTrackACount :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
-    plotTrackACount name es bs = layoutWithTitle (plotBars plot) name
+    plotTrackACount name es bs = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values      ^= barsData $
                    plot_bars_item_styles ^= itemStyles $
                    plot_bars_titles      ^= map show subTracks $
@@ -364,7 +371,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                        | ((t,_),sns) <- edges2bins bs minTime maxTime (edges es), (s,n) <- sns]
 
     plotTrackAFreq :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
-    plotTrackAFreq name es bs = layoutWithTitle (plotBars plot) name
+    plotTrackAFreq name es bs = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values      ^= barsData $
                    plot_bars_item_styles ^= itemStyles $
                    plot_bars_titles      ^= map show subTracks $
@@ -386,7 +393,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
     plotTrackAtoms :: (Num v, BarsPlotValue v) =>
                       ([S.ByteString] -> [S.ByteString] -> [v]) ->
                       S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t v
-    plotTrackAtoms f name es bs k = layoutWithTitle (plotBars plot) name
+    plotTrackAtoms f name es bs k = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_style       ^= k           $
                    plot_bars_values      ^= vals        $
                    plot_bars_item_styles ^= itemStyles  $
@@ -400,7 +407,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
 
     -- TODO Multiple tracks
     plotTrackEvent :: S.ByteString -> [(t,InEvent)] -> Layout1 t Status
-    plotTrackEvent     name es       = layoutWithTitle (toPlot plot) name
+    plotTrackEvent     name es       = layoutWithTitle [toPlot plot] name
       where plot = plot_event_data           ^= dropTrack (edges2events (edges es) minTime maxTime) $
                    plot_event_long_fillstyle ^= toFillStyle             $
                    plot_event_label          ^= toLabel                 $
@@ -410,7 +417,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
             toLabel     s = statusLabel s
 
     plotTrackQuantile :: S.ByteString -> [(t,InEvent)] -> [Double] -> Delta t -> Layout1 t Double
-    plotTrackQuantile  name es qs bs = layoutWithTitle (plotBars plot) name
+    plotTrackQuantile  name es qs bs = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values  ^= toBars (byTimeBins (getQuantiles qs) bs t0 vs) $
                    plot_bars_item_styles ^= quantileStyles $
                    plot_bars_titles  ^= quantileTitles $
@@ -426,7 +433,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
     lag :: [a] -> [(a,a)]
     lag xs = xs `zip` tail xs
 
-    colors = cycle [green,blue,yellow,red,orange,brown,grey,purple,violet,lightblue]
+    colors = cycle [green,blue,red,brown,yellow,orange,grey,purple,violet,lightblue]
 
     binTitles vs = [low]++[show v1++".."++show v2 | (v1,v2) <- lag vs]++[high]
       where
@@ -448,7 +455,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
         n    = length vs
 
     plotTrackBars :: (BarsPlotValue a) => [(t,[a])] -> [String] -> S.ByteString -> (Int -> AlphaColour Double) -> Layout1 t a
-    plotTrackBars values titles name clr = layoutWithTitle (plotBars plot) name
+    plotTrackBars values titles name clr = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values      ^= values    $
                    plot_bars_item_styles ^= binStyles $
                    plot_bars_titles      ^= "":titles $
@@ -460,34 +467,57 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
     toBars tvs = [(t,diffs vs) | (t,vs) <- tvs]
     diffs xs = zipWith (-) xs (0:xs)
 
-    plotLines :: S.ByteString -> [(t,Double)] -> Layout1 t Double
-    plotLines name vs = layoutWithTitle (toPlot plot) name
-      where plot = plot_lines_values ^= [vs] $ defaultPlotLines
+    plotLines :: S.ByteString -> [(S.ByteString, [(t,Double)])] -> Layout1 t Double
+    plotLines name vss = layoutWithTitle (map toPlot plots) name
+      where plots = [plot_lines_values ^= [vs] $ 
+                     plot_lines_title  ^= S.unpack subtrack $ 
+                     plot_lines_style  .> line_color ^= color $ 
+                     defaultPlotLines 
+                     | (subtrack, vs) <- vss
+                     | color <- map opaque colors]
 
     plotTrackLines :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
-    plotTrackLines name es = plotLines name vs
-      where vs = [(t,v) | (t,s,v) <- values es]
+    plotTrackLines name es = plotLines name vss
+      where vss = M.toList $ M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
 
     plotTrackDots :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
-    plotTrackDots  name es = layoutWithTitle (toPlot plot) name
-      where plot = plot_points_values ^= vs $
-                   plot_points_style  ^= hollowCircles 4 1 (opaque blue) $
-                   defaultPlotPoints
-            -- TODO Multiple tracks
-            vs   = [(t,v) | (t,_,v) <- values es]
+    plotTrackDots  name es = layoutWithTitle (map toPlot plots) name
+      where plots = [plot_points_values ^= vs $
+                     plot_points_style  ^= hollowCircles 4 1 color $
+                     plot_points_title  ^= S.unpack subtrack $
+                     defaultPlotPoints
+                     | (subtrack, vs) <- vss
+                     | color <- map opaque colors]
+            vss  = M.toList $ M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
 
-    plotTrackCumSum :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
-    plotTrackCumSum name es = plotLines name $ scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) vs
-      where vs = [(t,v) | (t,_,v) <- values es]
+    -- TODO Multiple tracks (Stacked)
+    plotTrackCumSum :: S.ByteString -> [(t,InEvent)] -> SumSubtrackStyle -> Layout1 t Double
+    plotTrackCumSum name es SumOverlayed = plotLines name rows
+      where vss  = M.toList $ M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
+            rows = [(track, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) vs) | (track, vs) <- vss]
 
-    plotTrackSum :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
-    plotTrackSum name es bs = plotLines name $ byTimeBins sum bs t0 vs
-      where vs = [(t,v) | (t,_,v) <- values es]
+    plotTrackSum :: S.ByteString -> [(t,InEvent)] -> Delta t -> SumSubtrackStyle -> Layout1 t Double
+    plotTrackSum name es bs ss = plotLines name rows
+      where vss  = M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
+            allTracks = M.keys vss
+            
+            rowsT :: [(t, M.Map S.ByteString Double)]
+            rowsT = byTimeBins (M.fromListWith (+)) bs t0 [(t, (track, v)) | (track, vs) <- M.toList vss, (t, v) <- vs]
+            
+            rowsT' = case ss of
+              SumOverlayed -> map (\(t,ss) -> (t, M.toList ss)) rowsT
+              SumStacked   -> map (\(t,ss) -> (t, stack ss))    rowsT
 
-    layoutWithTitle :: (PlotValue a) => Plot t a -> S.ByteString -> Layout1 t a
-    layoutWithTitle plot name =
+            stack :: M.Map S.ByteString Double -> [(S.ByteString, Double)]
+            stack ss = zip allTracks (scanl (+) 0 (map (ss M.!) allTracks))
+            
+            rows :: [(S.ByteString, [(t, Double)])]
+            rows  = M.toList $ M.fromListWith (++) [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
+
+    layoutWithTitle :: (PlotValue a) => [Plot t a] -> S.ByteString -> Layout1 t a
+    layoutWithTitle plots name =
         layout1_title ^= "" $
-        layout1_plots ^= [Left plot] $
+        layout1_plots ^= map Left plots $
         layout1_bottom_axis .> laxis_generate ^= (\_ -> commonTimeAxis) $
         layout1_top_axis    .> laxis_generate ^= (\_ -> commonTimeAxis) $
         layout1_left_axis   .> laxis_title ^= S.unpack name $
@@ -548,7 +578,10 @@ edges2bins binSize minTime maxTime es = snd $ execRWS (mapM_ step es >> flush) (
       (t1, t2) <- getBin
       if t < t1
         then error "Times are not in ascending order"
-        else (when (t >= t2) flushBin) >> step' ev
+        else if (t >= t2)
+               then flushBin >> step ev
+               else step'' ev
+    step'' ev@(t,s,e) = do (t1,t2) <- getBin; when (t < t1 || t >= t2) (error "Outside bin"); step' ev
     step' (t, s, SetTo _) = modState s t id
     step' (t, s, Pulse _) = modState s t id
     step' (t, s, Rise)    = modState s t $ \(area, start, nopen, npulse) -> (area+toSeconds (t `sub` start) t*nopen, t, nopen+1, npulse)
@@ -687,8 +720,7 @@ showHelp = mapM_ putStrLn [ "",
   "     and finishing tasks on different machines, and you want to plot a diagram",
   "     showing the number of utilized machines and how this number is composed of",
   "     utilization by different jobs, make your trace say '>job-JOBID'...'<job-JOBID'",
-  "     and use -k job 'within[-] count 1'. Currently just 'duration' and 'acount'",
-  "     are supported.",
+  "     and use -k job 'within[-] count 1'.",
   "  'acount N' is for activity counts: a histogram is drawn with granularity",
   "     of N time units, where the bin corresponding to [t..t+N) has value",
   "     'what was the average number of active events or impulses in that",
@@ -711,8 +743,10 @@ showHelp = mapM_ putStrLn [ "",
   "  'binh N v1,v2,..' (example: binf 100 1,2,5,10) - a histogram of counts of",
   "     values falling into bins min..v1, v1..v2, .., v2..max in time bins of",
   "     size N",
-  "  'lines'  - a simple line plot of numeric values",
-  "  'dots'   - a simple dot plot of numeric values",
+  "  'lines'  - a simple line plot of numeric values. When used in 'within', ",
+  "     gives one plot per subtrack.",
+  "  'dots'   - a simple dot plot of numeric values. When used in 'within', ",
+  "     gives one plot per subtrack.",
   "  'cumsum' - a simple line plot of the sum of the numeric values",
   "  'sum N'  - a simple line plot of the sum of the numeric values in time",
   "     bins of size N. N is measured in units or in seconds."
