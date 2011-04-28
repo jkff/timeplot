@@ -120,7 +120,8 @@ instance TimeAxis LocalTime
 data (TimeAxis t) => ChartKind t = KindEvent
                | KindDuration  { subKind :: ChartKind t }
                | KindWithin    { mapName :: S.ByteString -> S.ByteString, subKind :: ChartKind t }
-               | KindCount     { binSize :: Delta t }
+               | KindACount    { binSize :: Delta t }
+               | KindAFreq     { binSize :: Delta t }
                | KindQuantile  { binSize :: Delta t, quantiles :: [Double] }
                | KindBinFreq   { binSize :: Delta t, delims    :: [Double] }
                | KindBinHist   { binSize :: Delta t, delims    :: [Double] }
@@ -199,7 +200,8 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
           Nothing -> s
           Just bt -> showDelta t bt
 
-        parseKind ["count",   n  ] = KindCount     {binSize=read n}
+        parseKind ["acount",  n  ] = KindACount    {binSize=read n}
+        parseKind ["afreq",   n  ] = KindAFreq     {binSize=read n}
         parseKind ["freq",    n  ] = KindFreq      {binSize=read n,style=BarsClustered}
         parseKind ["freq",    n,s] = KindFreq      {binSize=read n,style=parseStyle s}
         parseKind ["hist",    n  ] = KindHistogram {binSize=read n,style=BarsClustered}
@@ -320,7 +322,8 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
 
     plotWithKind :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
     plotWithKind name k es = case k of
-      KindCount     bs    -> withAnyOrdinate $ plotTrackCount     name es bs
+      KindACount    bs    -> withAnyOrdinate $ plotTrackACount    name es bs
+      KindAFreq     bs    -> withAnyOrdinate $ plotTrackAFreq     name es bs
       KindFreq      bs k  -> withAnyOrdinate $ plotTrackFreq      name es bs k
       KindHistogram bs k  -> withAnyOrdinate $ plotTrackHist      name es bs k
       KindEvent           -> withAnyOrdinate $ plotTrackEvent     name es
@@ -348,8 +351,8 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                   plot_bars_alignment ^= BarsLeft     $
                   defaultPlotBars
 
-    plotTrackCount :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Int
-    plotTrackCount name es bs = layoutWithTitle (plotBars plot) name
+    plotTrackACount :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
+    plotTrackACount name es bs = layoutWithTitle (plotBars plot) name
       where plot = plot_bars_values      ^= barsData $
                    plot_bars_item_styles ^= itemStyles $
                    plot_bars_titles      ^= map show subTracks $
@@ -359,6 +362,20 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
             subTracks = Set.toList $ Set.fromList [s | (_,sns) <- bins, (s,n) <- sns]
             barsData = [(t, map (fromMaybe 0 . (`lookup` sns)) subTracks) 
                        | ((t,_),sns) <- edges2bins bs minTime maxTime (edges es), (s,n) <- sns]
+
+    plotTrackAFreq :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
+    plotTrackAFreq name es bs = layoutWithTitle (plotBars plot) name
+      where plot = plot_bars_values      ^= barsData $
+                   plot_bars_item_styles ^= itemStyles $
+                   plot_bars_titles      ^= map show subTracks $
+                   ourPlotBars
+            itemStyles = [(solidFillStyle (opaque c), Nothing) | c <- colors]
+            bins = edges2bins bs minTime maxTime (edges es)
+            subTracks = Set.toList $ Set.fromList [s | (_,sns) <- bins, (s,n) <- sns]
+            barsData = [(t, map ((/total) . fromMaybe 0 . (`lookup` sns)) subTracks) 
+                       | ((t,_),sns) <- edges2bins bs minTime maxTime (edges es), 
+                         let total = (\x -> if x==0 then 1 else x) $ sum [n | (s,n) <- sns], 
+                         (s,n) <- sns]
 
     plotTrackFreq  :: S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t Double
     plotTrackFreq  = plotTrackAtoms atoms2freqs
@@ -509,21 +526,22 @@ edges2events tes minTime maxTime = snd $ execRWS (mapM_ step tes >> flush) () M.
 
     flush = get >>= mapM_ (\(s, (t0,_,st)) -> tell [(s, LongEvent t0 maxTime st)]) . M.toList
 
-edges2bins :: (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,S.ByteString,Edge)] -> [((t,t), [(S.ByteString,Int)])]
+edges2bins :: forall t. (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,S.ByteString,Edge)] -> [((t,t), [(S.ByteString,Double)])]
 edges2bins binSize minTime maxTime es = snd $ execRWS (mapM_ step es >> flush) () (M.empty, iterate (add binSize) minTime)
   where
     getBin       = gets $ \(m, t1:t2:ts) -> (t1, t2)
     nextBin      = get >>= \(m, t1:t2:ts) -> put (m, t2:ts)
-    getState s   = gets $ \(m, _) -> (M.findWithDefault (0,0,0) s m)
+    getState s t = gets $ \(m, _) -> (M.findWithDefault (0,t,0,0) s m)
     putState s v = get >>= \(m, ts) -> put (M.insert s v m, ts)
-    modState s f = getState s >>= putState s . f
+    modState s t f = getState s t >>= putState s . f
     getStates    = gets (\(m,_) -> M.toList m)
 
     flushBin = do
-      bin <- getBin
+      bin@(t1,t2) <- getBin
       states <- getStates
-      tell [(bin, [(s,nmax) | (s,(nmax,_,_)) <- states])]
-      forM_ states $ \(s, (nmax, nopen, _)) -> putState s (nopen, nopen, 0)
+      let binSizeSec = toSeconds (t2 `sub` t1) t1
+      tell [(bin, [(s, (fromIntegral npulse/binSizeSec + area + toSeconds (t2 `sub` start) t2*nopen)/binSizeSec) | (s,(area,start,nopen,npulse)) <- states])]
+      forM_ states $ \(s, (area,start,nopen,_)) -> putState s (0,t2,nopen,0)
       nextBin
 
     step ev@(t, s, e) = do
@@ -531,11 +549,11 @@ edges2bins binSize minTime maxTime es = snd $ execRWS (mapM_ step es >> flush) (
       if t < t1
         then error "Times are not in ascending order"
         else (when (t >= t2) flushBin) >> step' ev
-    step' (t, s, SetTo _) = modState s id
-    step' (t, s, Pulse _) = modState s $ \(nmax, nopen, npulse) -> (nmax `max` (nopen + npulse + 1), nopen, npulse+1)
-    step' (t, s, Rise)    = modState s $ \(nmax, nopen, npulse) -> (nmax `max` (nopen + npulse + 1), nopen+1, npulse)
-    step' (t, s, Fall)    = modState s $ \(nmax, nopen, npulse) -> (nmax,                            nopen-1, npulse)
-    flush                = getBin >>= \(t1,t2) -> when (t2 <= maxTime) (flushBin >> flush)
+    step' (t, s, SetTo _) = modState s t id
+    step' (t, s, Pulse _) = modState s t id
+    step' (t, s, Rise)    = modState s t $ \(area, start, nopen, npulse) -> (area+toSeconds (t `sub` start) t*nopen, t, nopen+1, npulse)
+    step' (t, s, Fall)    = modState s t $ \(area, start, nopen, npulse) -> (area+toSeconds (t `sub` start) t*nopen, t, nopen-1, npulse)
+    flush                 = getBin >>= \(t1,t2) -> when (t2 <= maxTime) (flushBin >> flush)
 
 values2timeBins :: (Ord t) => [t] -> [(t,a)] -> [[a]]
 values2timeBins (t1:t2:ts) []          = []
@@ -660,16 +678,25 @@ showHelp = mapM_ putStrLn [ "",
   "     300 0.25,0.5,0.75' will plot these quantiles of durations of the",
   "     events. This is useful where your log looks like 'Started processing'",
   "     ... 'Finished processing': you can plot processing durations without",
-  "     computing them yourself.",
-  "  'duration[C] XXXX' - same as 'duration', but of a track's name we only",
-  "     take the part before character C. For example, if you have processes",
+  "     computing them yourself. Very useful inside 'within'!",
+  "  'within[C] XXXX' - draw plot XXXX over events grouped by their track's name ",
+  "     before separator C. For example, if you have processes",
   "     named 'MACHINE-PID' (i.e. UNIT027-8532) say 'begin something' / ",
   "     'end something' and you're interested in the properties of per-machine",
-  "     durations, use duration[-].",
-  "  'count N' is for activity counts: a histogram is drawn with granularity",
+  "     durations, use within[-] duration dots; or if you've got jobs starting",
+  "     and finishing tasks on different machines, and you want to plot a diagram",
+  "     showing the number of utilized machines and how this number is composed of",
+  "     utilization by different jobs, make your trace say '>job-JOBID'...'<job-JOBID'",
+  "     and use -k job 'within[-] count 1'. Currently just 'duration' and 'acount'",
+  "     are supported.",
+  "  'acount N' is for activity counts: a histogram is drawn with granularity",
   "     of N time units, where the bin corresponding to [t..t+N) has value",
-  "     'what was the maximal number of active events or impulses in that",
-  "     interval'.",
+  "     'what was the average number of active events or impulses in that",
+  "     interval'. When used inside 'within', the histogram is a stacked one,",
+  "     with one vertical bar per subtrack in each bin.",
+  "  'afreq N' is for activity frequencies: it's like acount, but relative",
+  "     rather than absolute - it only makes sense inside 'within', because",
+  "     otherwise it would just always show a filled one-coloured bar in every bin.",
   "  'freq N [TYPE]' is for event frequency histograms: a histogram of type",
   "     TYPE (stacked or clustered, default clustered) is drawn for each time",
   "     bin of size N, about the *frequency* of various ` events",
