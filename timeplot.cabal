@@ -1,5 +1,5 @@
 name: timeplot
-version: 0.2.24
+version: 0.3.0
 cabal-version: >=1.6
 build-type: Simple
 license: BSD3
@@ -35,4 +35,5 @@ executable tplot
     build-depends: Chart >=0.14, base >=3 && <5, bytestring -any,
                    bytestring-lexing -any, cairo -any, colour -any, containers -any,
                    data-accessor ==0.2.*, data-accessor-template >=0.2.1.1 && <0.3,
-                   haskell98 -any, regex-tdfa -any, strptime >=0.1.7, time -any
+                   haskell98 -any, regex-tdfa -any, strptime >=0.1.7, time -any,
+                   transformers -any

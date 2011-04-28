@@ -2,11 +2,13 @@
 module Main where
 
 import Control.Monad
+import Control.Monad.Trans.RWS.Strict
 import Control.Arrow
 import Data.List
 import Data.Ord
 import Data.Maybe
 import qualified Data.Map as M
+import qualified Data.Set as Set
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy.Char8 as B
 import Data.ByteString.Lex.Lazy.Double
@@ -36,6 +38,8 @@ import Graphics.Rendering.Chart.Event
 import Data.Colour
 import Data.Colour.Names
 
+import Debug.Trace
+
 data Status = Status {statusColor :: String, statusLabel :: String} deriving (Eq, Show, Ord)
 
 instance PlotValue Status where
@@ -52,7 +56,7 @@ unitStatusAxis = AxisData {
     axis_grid_     = []
 }
 
-data Edge = Rise | Fall | Pulse {pulseLabel :: String} | SetTo Status deriving (Eq,Show)
+data Edge = Rise | Fall | Pulse Status | SetTo Status deriving (Eq,Show)
 
 data InEvent = InEdge  {evt_track :: S.ByteString, evt_edge :: Edge}
              | InValue {evt_track :: S.ByteString, evt_value :: Double}
@@ -114,7 +118,8 @@ instance TimeAxis Double
 instance TimeAxis LocalTime
 
 data (TimeAxis t) => ChartKind t = KindEvent
-               | KindDuration  { mapName :: S.ByteString -> S.ByteString, subKind :: ChartKind t }
+               | KindDuration  { subKind :: ChartKind t }
+               | KindWithin    { mapName :: S.ByteString -> S.ByteString, subKind :: ChartKind t }
                | KindCount     { binSize :: Delta t }
                | KindQuantile  { binSize :: Delta t, quantiles :: [Double] }
                | KindBinFreq   { binSize :: Delta t, delims    :: [Double] }
@@ -207,9 +212,9 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
         parseKind ["dots"        ] = KindDots
         parseKind ["cumsum"      ] = KindCumSum
         parseKind ["sum",     b  ] = KindSum       {binSize=read b}
-        parseKind ("duration":ws)  = KindDuration  {subKind=parseKind ws, mapName=id}
-        parseKind (('d':'u':'r':'a':'t':'i':'o':'n':'[':sep:"]"):ws)
-                                   = KindDuration  {subKind=parseKind ws, mapName = fst . S.break (==sep)}
+        parseKind ("duration":ws)  = KindDuration  {subKind=parseKind ws}
+        parseKind (('w':'i':'t':'h':'i':'n':'[':sep:"]"):ws)
+                                   = KindWithin    {subKind=parseKind ws, mapName = fst . S.break (==sep)}
         parseKind ["none"        ] = KindNone
         parseKind ws               = error ("Unknown diagram kind " ++ unwords ws)
 
@@ -243,10 +248,10 @@ readSource readTime f = (justs . map parseLine . blines) `fmap` (if f=="-" then 
         '!' -> do
           let (track, val') = B.break (==' ') rest
           if B.null val'
-            then return (t, InEdge (strict track) (Pulse ""))
+            then return (t, InEdge (strict track) (Pulse (Status "" "")))
             else do
               (_,val) <- B.uncons val'
-              return (t, InEdge (strict track) . Pulse . B.unpack $ val)
+              return (t, InEdge (strict track) $ Pulse (Status "" (B.unpack val)))
         '@' -> do
           let (track, val') = B.break (==' ') rest
           (_,val) <- B.uncons val'
@@ -283,16 +288,16 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
 
     plots          = [ plotTrack k kind es | (k, es) <- M.toList track2events,
                                              kind <- chartKindF k,
-                                             case kind of {KindNone -> False ; KindDuration _ _ -> False ; _ -> True} ] ++
-                     durationPlots
+                                             case kind of {KindNone -> False ; KindWithin _ _ -> False ; _ -> True} ] ++
+                     withinPlots
 
-    durationPlots  = [ plotWithKind name k es | (name, (k,es)) <- M.toList durationTracks ]
+    withinPlots  = [ plotWithKind name k es | (name, (k,es)) <- M.toList withinTracks ]
       where
-        durationTracks = M.fromListWith (\(ka,as) (kb,bs) -> (ka,mergeOn fst as bs)) components
-        components = [ (mn k, (sk, edges2durations (edges es) minTime maxTime))
+        withinTracks = M.fromListWith (\(ka,as) (kb,bs) -> (ka,mergeOn fst as bs)) components
+        components = [ (mn k, (sk, es))
                      | (k, es) <- M.toList track2events,
                        kind <- chartKindF k,
-                       Just (sk,mn) <- [case kind of {KindDuration mn sk -> Just (sk,mn) ; _ -> Nothing}]]
+                       Just (sk,mn) <- [case kind of {KindWithin mn sk -> Just (sk,mn) ; _ -> Nothing}]]
         mergeOn f [] ys = ys
         mergeOn f xs [] = xs
         mergeOn f (x:xs) (y:ys)
@@ -326,7 +331,8 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
       KindDots            -> withAnyOrdinate $ plotTrackDots      name es
       KindSum       bs    -> withAnyOrdinate $ plotTrackSum       name es bs
       KindCumSum          -> withAnyOrdinate $ plotTrackCumSum    name es
-      KindDuration  _ _   -> error "KindDuration should not be plotted"
+      KindDuration  sk    -> plotWithKind       name sk (edges2durations (edges es) minTime maxTime)
+      KindWithin    _ _   -> error "KindDuration should not be plotted"
       KindNone            -> error "KindNone should not be plotted"
 
     edges  :: [(t,InEvent)] -> [(t,S.ByteString,Edge)]
@@ -345,11 +351,14 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
     plotTrackCount :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Int
     plotTrackCount name es bs = layoutWithTitle (plotBars plot) name
       where plot = plot_bars_values      ^= barsData $
-                   plot_bars_item_styles ^= [(solidFillStyle (opaque blue), Nothing)] $
+                   plot_bars_item_styles ^= itemStyles $
+                   plot_bars_titles      ^= map show subTracks $
                    ourPlotBars
-            barsData :: [(t,[Int])]
-            -- TODO: Multiple tracks
-            barsData = [(t,[n]) | ((t,_),n) <- edges2bins bs minTime maxTime (edges es)]
+            itemStyles = [(solidFillStyle (opaque c), Nothing) | c <- colors]
+            bins = edges2bins bs minTime maxTime (edges es)
+            subTracks = Set.toList $ Set.fromList [s | (_,sns) <- bins, (s,n) <- sns]
+            barsData = [(t, map (fromMaybe 0 . (`lookup` sns)) subTracks) 
+                       | ((t,_),sns) <- edges2bins bs minTime maxTime (edges es), (s,n) <- sns]
 
     plotTrackFreq  :: S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t Double
     plotTrackFreq  = plotTrackAtoms atoms2freqs
@@ -372,6 +381,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
             as   = [(t,a) | (t,_,a) <- atoms es]
             vs   = M.keys $ M.fromList $ [(a,()) | (_,a) <- as]
 
+    -- TODO Multiple tracks
     plotTrackEvent :: S.ByteString -> [(t,InEvent)] -> Layout1 t Status
     plotTrackEvent     name es       = layoutWithTitle (toPlot plot) name
       where plot = plot_event_data           ^= dropTrack (edges2events (edges es) minTime maxTime) $
@@ -439,8 +449,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
 
     plotTrackLines :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
     plotTrackLines name es = plotLines name vs
-      -- TODO Multiple tracks
-      where vs = [(t,v) | (t,_,v) <- values es]
+      where vs = [(t,v) | (t,s,v) <- values es]
 
     plotTrackDots :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
     plotTrackDots  name es = layoutWithTitle (toPlot plot) name
@@ -470,51 +479,63 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
         defaultLayout1
 
 edges2durations :: forall t. (Ord t, HasDelta t) => [(t,S.ByteString,Edge)] -> t -> t -> [(t,InEvent)]
-edges2durations tes minTime maxTime = [(t2, InValue s $ toSeconds (t2 `sub` t1) (undefined::t)) | (s,LongEvent t1 t2 _) <- edges2events tes minTime maxTime]
+edges2durations tes minTime maxTime = [(t2, InValue track $ toSeconds (t2 `sub` t1) (undefined::t)) | (track,LongEvent t1 t2 _) <- edges2events tes minTime maxTime]
 
 edges2events :: (Ord t) => [(t,S.ByteString,Edge)] -> t -> t -> [(S.ByteString,Event t Status)]
-edges2events tes minTime maxTime = longs `merge` pulses
+edges2events tes minTime maxTime = snd $ execRWS (mapM_ step tes >> flush) () M.empty 
   where
-    merge [] ps = ps
-    merge ls [] = ls
-    merge (l@(sl, LongEvent t1 t2 _):ls) (p@(sp, PulseEvent t _):ps)
-      | t1<t = l:merge ls (p:ps)
-      | True = p:merge (l:ls) ps
-    pulses = [(s,PulseEvent t (Status {statusColor="", statusLabel=st})) | (t,s,Pulse st) <- tes]
-    edges  = [(t,s,e) | (t,s,e) <- tes, case e of { Pulse _ -> False; _ -> True } ]
-    longs  = longs' (Status "" "") Nothing 0 edges
-      where
-        longs' st _              0 [] = []
-        longs' st (Just (t0,s0)) _ [] = [(s0,LongEvent t0 maxTime st)]
-        longs' st Nothing        0 ((t,s,Rise):tes) = longs' st (Just (t,s))  1 tes
-        longs' st Nothing        0 ((t,s,Fall):tes) = longs' st Nothing   0 tes
-        longs' st (Just (t0,s0)) n ((t,s,Rise):tes) = longs' st (Just (t0,s0)) (n+1) tes
-        longs' st (Just (t0,s0)) 1 ((t,s,Fall):tes) = (s0,LongEvent t0 t st) : longs' st Nothing 0 tes
-        longs' st (Just (t0,s0)) n ((t,s,Fall):tes) = longs' st (Just (t0,s0)) (n-1) tes
-        longs' st Nothing        0 ((t,s,SetTo st'):tes) = longs' st' (Just (t,s)) 1 tes
-        longs' st (Just (t0,s0)) n ((t,s,SetTo st'):tes) = (s0,LongEvent t0 t st) : longs' st' (Just (t,s)) n tes
+    getTrack s = M.findWithDefault (undefined, 0, emptyStatus) s `fmap` get 
+    putTrack s t = get >>= put . M.insert s t
+    trackCase s whenZero withNonzero = do
+      (t0, numActive, st) <- getTrack s
+      case numActive of
+        0 -> whenZero
+        n -> withNonzero t0 numActive st
+    killTrack s = get >>= put . M.delete s
 
--- TODO Multiple tracks
--- edges2bins :: (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,S.ByteString,Edge)] -> [((t,t), [(S.ByteString,Int)])]
-edges2bins :: (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,S.ByteString,Edge)] -> [((t,t), Int)]
-edges2bins binSize minTime maxTime es = gather 0 0 0 es maxTime $ iterate (add binSize) minTime
+    emptyStatus = Status "" ""
+
+    step (t,s,Pulse st) = tell [(s, PulseEvent t st)]
+    step (t,s,SetTo st) = trackCase s (putTrack s (t, 1, st))
+                                      (\t0 n st0 -> tell [(s, LongEvent t0 t st0)] >> 
+                                                    putTrack s (t, n, st))
+    step (t,s,Rise)     = trackCase s (putTrack s (t, 1, emptyStatus)) 
+                                      (\t0 n st -> putTrack s (t, n+1, st))
+    step (t,s,Fall)     = do
+      (t0, numActive, st) <- getTrack s
+      case numActive of
+        1 -> tell [(s, LongEvent t0 t st)] >> killTrack s
+        n -> putTrack s (t0, max 0 (n-1), st)
+
+    flush = get >>= mapM_ (\(s, (t0,_,st)) -> tell [(s, LongEvent t0 maxTime st)]) . M.toList
+
+edges2bins :: (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,S.ByteString,Edge)] -> [((t,t), [(S.ByteString,Int)])]
+edges2bins binSize minTime maxTime es = snd $ execRWS (mapM_ step es >> flush) () (M.empty, iterate (add binSize) minTime)
   where
-    gather :: (Ord t) => Int -> Int -> Int -> [(t,S.ByteString,Edge)] -> t -> [t] -> [((t,t), Int)]
-    gather 0 _ _ [] maxTime (t1:t2:ts) = []
-    gather n nopen npulse [] maxTime (t1:t2:ts) = if t2 <= maxTime 
-                                                  then ((t1,t2),n):gather nopen nopen npulse [] maxTime (t2:ts) 
-                                                  else []
-    gather nmax nopen npulse ((t,n,e):tes) maxTime (t1:t2:ts)
-      | t<t1 = error "Times are not in ascending order"
-      | t>=t2 = ((t1,t2),nmax):gather nopen nopen 0 ((t,n,e):tes) maxTime (t2:ts)
-    gather nmax nopen npulse ((t,_,Rise ):tes) maxTime (t1:t2:ts)
-      = gather (nmax `max` (nopen+npulse+1)) (nopen+1) npulse     tes maxTime (t1:t2:ts)
-    gather nmax nopen npulse ((t,_,Fall ):tes) maxTime (t1:t2:ts)
-      = gather nmax                          (nopen-1) npulse     tes maxTime (t1:t2:ts)
-    gather nmax nopen npulse ((t,_,Pulse _):tes) maxTime (t1:t2:ts)
-      = gather (nmax `max` (nopen+npulse+1)) nopen    (npulse+1)  tes maxTime (t1:t2:ts)
-    gather nmax nopen npulse ((t,_,SetTo s):tes) maxTime (t1:t2:ts)
-      = gather nmax                          nopen     npulse     tes maxTime (t1:t2:ts)
+    getBin       = gets $ \(m, t1:t2:ts) -> (t1, t2)
+    nextBin      = get >>= \(m, t1:t2:ts) -> put (m, t2:ts)
+    getState s   = gets $ \(m, _) -> (M.findWithDefault (0,0,0) s m)
+    putState s v = get >>= \(m, ts) -> put (M.insert s v m, ts)
+    modState s f = getState s >>= putState s . f
+    getStates    = gets (\(m,_) -> M.toList m)
+
+    flushBin = do
+      bin <- getBin
+      states <- getStates
+      tell [(bin, [(s,nmax) | (s,(nmax,_,_)) <- states])]
+      forM_ states $ \(s, (nmax, nopen, _)) -> putState s (nopen, nopen, 0)
+      nextBin
+
+    step ev@(t, s, e) = do
+      (t1, t2) <- getBin
+      if t < t1
+        then error "Times are not in ascending order"
+        else (when (t >= t2) flushBin) >> step' ev
+    step' (t, s, SetTo _) = modState s id
+    step' (t, s, Pulse _) = modState s $ \(nmax, nopen, npulse) -> (nmax `max` (nopen + npulse + 1), nopen, npulse+1)
+    step' (t, s, Rise)    = modState s $ \(nmax, nopen, npulse) -> (nmax `max` (nopen + npulse + 1), nopen+1, npulse)
+    step' (t, s, Fall)    = modState s $ \(nmax, nopen, npulse) -> (nmax,                            nopen-1, npulse)
+    flush                = getBin >>= \(t1,t2) -> when (t2 <= maxTime) (flushBin >> flush)
 
 values2timeBins :: (Ord t) => [t] -> [(t,a)] -> [[a]]
 values2timeBins (t1:t2:ts) []          = []
