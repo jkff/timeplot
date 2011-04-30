@@ -467,6 +467,8 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
     toBars tvs = [(t,diffs vs) | (t,vs) <- tvs]
     diffs xs = zipWith (-) xs (0:xs)
 
+    groupByTrack xs = M.toList $ sort `fmap` M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- xs]
+
     plotLines :: S.ByteString -> [(S.ByteString, [(t,Double)])] -> Layout1 t Double
     plotLines name vss = layoutWithTitle (map toPlot plots) name
       where plots = [plot_lines_values ^= [vs] $ 
@@ -477,8 +479,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                      | color <- map opaque colors]
 
     plotTrackLines :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
-    plotTrackLines name es = plotLines name vss
-      where vss = M.toList $ M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
+    plotTrackLines name es = plotLines name (groupByTrack (values es))
 
     plotTrackDots :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
     plotTrackDots  name es = layoutWithTitle (map toPlot plots) name
@@ -486,33 +487,31 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                      plot_points_style  ^= hollowCircles 4 1 color $
                      plot_points_title  ^= S.unpack subtrack $
                      defaultPlotPoints
-                     | (subtrack, vs) <- vss
+                     | (subtrack, vs) <- groupByTrack (values es)
                      | color <- map opaque colors]
-            vss  = M.toList $ M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
 
     -- TODO Multiple tracks (Stacked)
     plotTrackCumSum :: S.ByteString -> [(t,InEvent)] -> SumSubtrackStyle -> Layout1 t Double
     plotTrackCumSum name es SumOverlayed = plotLines name rows
-      where vss  = M.toList $ M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
-            rows = [(track, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) vs) | (track, vs) <- vss]
+      where rows = [(track, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) vs) | (track, vs) <- groupByTrack (values es)]
 
     plotTrackSum :: S.ByteString -> [(t,InEvent)] -> Delta t -> SumSubtrackStyle -> Layout1 t Double
     plotTrackSum name es bs ss = plotLines name rows
-      where vss  = M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
-            allTracks = M.keys vss
+      where groups    = groupByTrack (values es)
+            allTracks = M.keys $ M.fromList groups
             
             rowsT :: [(t, M.Map S.ByteString Double)]
-            rowsT = byTimeBins (M.fromListWith (+)) bs t0 [(t, (track, v)) | (track, vs) <- M.toList vss, (t, v) <- vs]
+            rowsT = byTimeBins (M.fromListWith (+)) bs t0 $ sort [(t, (track, v)) | (track, vs) <- groups, (t, v) <- vs]
             
             rowsT' = case ss of
               SumOverlayed -> map (\(t,ss) -> (t, M.toList ss)) rowsT
               SumStacked   -> map (\(t,ss) -> (t, stack ss))    rowsT
 
             stack :: M.Map S.ByteString Double -> [(S.ByteString, Double)]
-            stack ss = zip allTracks (scanl (+) 0 (map (ss M.!) allTracks))
+            stack ss = zip allTracks (scanl1 (+) (map (\x -> M.findWithDefault 0 x ss) allTracks))
             
             rows :: [(S.ByteString, [(t, Double)])]
-            rows  = M.toList $ M.fromListWith (++) [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
+            rows  = M.toList $ sort `fmap` M.fromListWith (++) [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
 
     layoutWithTitle :: (PlotValue a) => [Plot t a] -> S.ByteString -> Layout1 t a
     layoutWithTitle plots name =

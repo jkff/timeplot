@@ -4,7 +4,7 @@ cabal-version: >=1.6
 build-type: Simple
 license: BSD3
 license-file: LICENSE
-copyright: Eugene Kirpichov, 2009
+copyright: Eugene Kirpichov, 2009-2011
 maintainer: Eugene Kirpichov <ekirpichov@gmail.com>
 stability: stable
 homepage: http://haskell.org/haskellwiki/Timeplot
