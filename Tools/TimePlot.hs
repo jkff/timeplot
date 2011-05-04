@@ -531,7 +531,7 @@ edges2durations tes minTime maxTime = [(t2, InValue track $ toSeconds (t2 `sub` 
 edges2events :: (Ord t) => [(t,S.ByteString,Edge)] -> t -> t -> [(S.ByteString,Event t Status)]
 edges2events tes minTime maxTime = snd $ execRWS (mapM_ step tes >> flush) () M.empty 
   where
-    getTrack s = M.findWithDefault (undefined, 0, emptyStatus) s `fmap` get 
+    getTrack s = M.findWithDefault (minTime, 0, emptyStatus) s `fmap` get 
     putTrack s t = get >>= put . M.insert s t
     trackCase s whenZero withNonzero = do
       (t0, numActive, st) <- getTrack s
