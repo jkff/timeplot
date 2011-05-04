@@ -2,7 +2,8 @@
 module Main where
 
 import Control.Monad
-import Control.Monad.Trans.RWS.Strict
+import qualified Control.Monad.Trans.State.Strict as St
+import qualified Control.Monad.Trans.RWS.Strict as RWS
 import Control.Arrow
 import Data.List
 import Data.Ord
@@ -467,6 +468,8 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
     toBars tvs = [(t,diffs vs) | (t,vs) <- tvs]
     diffs xs = zipWith (-) xs (0:xs)
 
+    groupByTrack xs = M.toList $ sort `fmap` M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- xs]
+
     plotLines :: S.ByteString -> [(S.ByteString, [(t,Double)])] -> Layout1 t Double
     plotLines name vss = layoutWithTitle (map toPlot plots) name
       where plots = [plot_lines_values ^= [vs] $ 
@@ -477,8 +480,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                      | color <- map opaque colors]
 
     plotTrackLines :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
-    plotTrackLines name es = plotLines name vss
-      where vss = M.toList $ M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
+    plotTrackLines name es = plotLines name (groupByTrack (values es))
 
     plotTrackDots :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
     plotTrackDots  name es = layoutWithTitle (map toPlot plots) name
@@ -486,33 +488,46 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                      plot_points_style  ^= hollowCircles 4 1 color $
                      plot_points_title  ^= S.unpack subtrack $
                      defaultPlotPoints
-                     | (subtrack, vs) <- vss
+                     | (subtrack, vs) <- groupByTrack (values es)
                      | color <- map opaque colors]
-            vss  = M.toList $ M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
 
-    -- TODO Multiple tracks (Stacked)
     plotTrackCumSum :: S.ByteString -> [(t,InEvent)] -> SumSubtrackStyle -> Layout1 t Double
     plotTrackCumSum name es SumOverlayed = plotLines name rows
-      where vss  = M.toList $ M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
-            rows = [(track, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) vs) | (track, vs) <- vss]
+      where rows = [(track, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) vs) | (track, vs) <- groupByTrack (values es)]
+    plotTrackCumSum name es SumStacked = plotLines name rows
+      where vals = values es
+            allTracks = Set.toList $ Set.fromList [track | (t, track, v) <- vals]
+
+            rows :: [(S.ByteString, [(t, Double)])]
+            rows = groupByTrack [(t, track, v) | (t, tvs) <- rowsT, (track,v) <- tvs]
+
+            rowsT :: [(t, [(S.ByteString, Double)])]
+            rowsT = (minTime, zip allTracks (repeat 0)) : St.evalState (mapM addDataPoint vals) M.empty
+            
+            addDataPoint (t, track, v) = do
+              St.modify (M.insertWith (+) track v)
+              st <- St.get
+              let trackSums = map (\x -> M.findWithDefault 0 x st) allTracks
+              return (t, allTracks `zip` (scanl1 (+) trackSums))
+
 
     plotTrackSum :: S.ByteString -> [(t,InEvent)] -> Delta t -> SumSubtrackStyle -> Layout1 t Double
     plotTrackSum name es bs ss = plotLines name rows
-      where vss  = M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- values es]
-            allTracks = M.keys vss
+      where groups    = groupByTrack (values es)
+            allTracks = M.keys $ M.fromList groups
             
             rowsT :: [(t, M.Map S.ByteString Double)]
-            rowsT = byTimeBins (M.fromListWith (+)) bs t0 [(t, (track, v)) | (track, vs) <- M.toList vss, (t, v) <- vs]
+            rowsT = byTimeBins (M.fromListWith (+)) bs t0 $ sort [(t, (track, v)) | (track, vs) <- groups, (t, v) <- vs]
             
             rowsT' = case ss of
               SumOverlayed -> map (\(t,ss) -> (t, M.toList ss)) rowsT
               SumStacked   -> map (\(t,ss) -> (t, stack ss))    rowsT
 
             stack :: M.Map S.ByteString Double -> [(S.ByteString, Double)]
-            stack ss = zip allTracks (scanl (+) 0 (map (ss M.!) allTracks))
+            stack ss = zip allTracks (scanl1 (+) (map (\x -> M.findWithDefault 0 x ss) allTracks))
             
             rows :: [(S.ByteString, [(t, Double)])]
-            rows  = M.toList $ M.fromListWith (++) [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
+            rows  = M.toList $ sort `fmap` M.fromListWith (++) [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
 
     layoutWithTitle :: (PlotValue a) => [Plot t a] -> S.ByteString -> Layout1 t a
     layoutWithTitle plots name =
@@ -529,48 +544,48 @@ edges2durations :: forall t. (Ord t, HasDelta t) => [(t,S.ByteString,Edge)] -> t
 edges2durations tes minTime maxTime = [(t2, InValue track $ toSeconds (t2 `sub` t1) (undefined::t)) | (track,LongEvent t1 t2 _) <- edges2events tes minTime maxTime]
 
 edges2events :: (Ord t) => [(t,S.ByteString,Edge)] -> t -> t -> [(S.ByteString,Event t Status)]
-edges2events tes minTime maxTime = snd $ execRWS (mapM_ step tes >> flush) () M.empty 
+edges2events tes minTime maxTime = snd $ RWS.execRWS (mapM_ step tes >> flush) () M.empty 
   where
-    getTrack s = M.findWithDefault (minTime, 0, emptyStatus) s `fmap` get 
-    putTrack s t = get >>= put . M.insert s t
+    getTrack s = M.findWithDefault (minTime, 0, emptyStatus) s `fmap` RWS.get 
+    putTrack s t = RWS.get >>= RWS.put . M.insert s t
     trackCase s whenZero withNonzero = do
       (t0, numActive, st) <- getTrack s
       case numActive of
         0 -> whenZero
         n -> withNonzero t0 numActive st
-    killTrack s = get >>= put . M.delete s
+    killTrack s = RWS.get >>= RWS.put . M.delete s
 
     emptyStatus = Status "" ""
 
-    step (t,s,Pulse st) = tell [(s, PulseEvent t st)]
+    step (t,s,Pulse st) = RWS.tell [(s, PulseEvent t st)]
     step (t,s,SetTo st) = trackCase s (putTrack s (t, 1, st))
-                                      (\t0 n st0 -> tell [(s, LongEvent t0 t st0)] >> 
+                                      (\t0 n st0 -> RWS.tell [(s, LongEvent t0 t st0)] >> 
                                                     putTrack s (t, n, st))
     step (t,s,Rise)     = trackCase s (putTrack s (t, 1, emptyStatus)) 
                                       (\t0 n st -> putTrack s (t, n+1, st))
     step (t,s,Fall)     = do
       (t0, numActive, st) <- getTrack s
       case numActive of
-        1 -> tell [(s, LongEvent t0 t st)] >> killTrack s
+        1 -> RWS.tell [(s, LongEvent t0 t st)] >> killTrack s
         n -> putTrack s (t0, max 0 (n-1), st)
 
-    flush = get >>= mapM_ (\(s, (t0,_,st)) -> tell [(s, LongEvent t0 maxTime st)]) . M.toList
+    flush = RWS.get >>= mapM_ (\(s, (t0,_,st)) -> RWS.tell [(s, LongEvent t0 maxTime st)]) . M.toList
 
 edges2bins :: forall t. (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,S.ByteString,Edge)] -> [((t,t), [(S.ByteString,Double)])]
-edges2bins binSize minTime maxTime es = snd $ execRWS (mapM_ step es >> flush) () (M.empty, iterate (add binSize) minTime)
+edges2bins binSize minTime maxTime es = snd $ RWS.execRWS (mapM_ step es >> flush) () (M.empty, iterate (add binSize) minTime)
   where
-    getBin       = gets $ \(m, t1:t2:ts) -> (t1, t2)
-    nextBin      = get >>= \(m, t1:t2:ts) -> put (m, t2:ts)
-    getState s t = gets $ \(m, _) -> (M.findWithDefault (0,t,0,0) s m)
-    putState s v = get >>= \(m, ts) -> put (M.insert s v m, ts)
+    getBin       = RWS.gets $ \(m, t1:t2:ts) -> (t1, t2)
+    nextBin      = RWS.get >>= \(m, t1:t2:ts) -> RWS.put (m, t2:ts)
+    getState s t = RWS.gets $ \(m, _) -> (M.findWithDefault (0,t,0,0) s m)
+    putState s v = RWS.get >>= \(m, ts) -> RWS.put (M.insert s v m, ts)
     modState s t f = getState s t >>= putState s . f
-    getStates    = gets (\(m,_) -> M.toList m)
+    getStates    = RWS.gets (\(m,_) -> M.toList m)
 
     flushBin = do
       bin@(t1,t2) <- getBin
       states <- getStates
       let binSizeSec = toSeconds (t2 `sub` t1) t1
-      tell [(bin, [(s, (fromIntegral npulse/binSizeSec + area + toSeconds (t2 `sub` start) t2*nopen)/binSizeSec) | (s,(area,start,nopen,npulse)) <- states])]
+      RWS.tell [(bin, [(s, (fromIntegral npulse/binSizeSec + area + toSeconds (t2 `sub` start) t2*nopen)/binSizeSec) | (s,(area,start,nopen,npulse)) <- states])]
       forM_ states $ \(s, (area,start,nopen,_)) -> putState s (0,t2,nopen,0)
       nextBin
 
@@ -721,6 +736,12 @@ showHelp = mapM_ putStrLn [ "",
   "     showing the number of utilized machines and how this number is composed of",
   "     utilization by different jobs, make your trace say '>job-JOBID'...'<job-JOBID'",
   "     and use -k job 'within[-] count 1'.",
+  "     Explanation: if you specify -k REGEX 'within[.] SOMETHING', timeplot will",
+  "     take all tracks matching REGEX, split each track around the first '.', giving",
+  "     a 'supertrack' and 'subtrack' (e.g. customer.John -> customer, John), ",
+  "     group the events by supertrack and for each supertrack draw a graphical track",
+  "     using the plot type SOMETHING. It's up to SOMETHING to do something with these",
+  "     events, e.g. 'lines' will simply draw several line plots, one per subtrack.",
   "  'acount N' is for activity counts: a histogram is drawn with granularity",
   "     of N time units, where the bin corresponding to [t..t+N) has value",
   "     'what was the average number of active events or impulses in that",
@@ -747,9 +768,15 @@ showHelp = mapM_ putStrLn [ "",
   "     gives one plot per subtrack.",
   "  'dots'   - a simple dot plot of numeric values. When used in 'within', ",
   "     gives one plot per subtrack.",
-  "  'cumsum' - a simple line plot of the sum of the numeric values",
-  "  'sum N'  - a simple line plot of the sum of the numeric values in time",
-  "     bins of size N. N is measured in units or in seconds."
+  "  'cumsum [TYPE]' - a simple line plot of the sum of the numeric values.",
+  "     When used in 'within', produce 1 subplot per subtrack. TYPE can be: ",
+  "     'overlayed' -> just lay the subplots over one another.",
+  "     'stacked'   -> add them up at each point to see how subtracks contribute",
+  "     to the total cumulative sum (default; only makes sense inside 'within')",
+  "  'sum N [TYPE]' - a simple line plot of the sum of the numeric values in time",
+  "     bins of size N. N is measured in units or in seconds.",
+  "     When used in 'within', produce 1 subplot per subtrack. TYPE used in same ",
+  "     way as in cumsum."
   ]
 
 
