@@ -21,7 +21,8 @@ import Data.Accessor
 import Data.Accessor.Template
 import Control.Monad
 
-data Event t e = LongEvent t t e  -- ^ An event that has a beginning and an end
+data Event t e = LongEvent (t,Bool) (t,Bool) e  -- ^ An event that has a beginning and an end. 
+                                                --   True = "known explicitly", False = "implicit" (e.g. imposed by axis bounds)
                | PulseEvent t e   -- ^ A zero-length event
                deriving (Show)
 
@@ -86,7 +87,7 @@ renderPlotEvent p pmap = do
       (Point x1 y1) = pmap (LMax,LMax)
       (cx,cy) = ((x0+x1)/2, (y0+y1)/2)
       drawEventFill (PulseEvent t e) = return ()
-      drawEventFill (LongEvent t1 t2 e) = do
+      drawEventFill (LongEvent (t1,_) (t2,_) e) = do
         let (Point x1 cy)  = pmap (LValue t1, LValue e)
         let (Point x2 cy') = pmap (LValue t2, LValue e) -- Assume cy' == cy (pmap is coordinate-wise)
         filledRect (plot_event_long_fillstyle_ p e) $ Rect
@@ -104,7 +105,7 @@ renderPlotEvent p pmap = do
           moveTo (Point x (y - pulseHeight/2 - C.textExtentsHeight extents - C.textExtentsYbearing extents - 1))
           setLineStyle $ solidLine 2 (opaque black)
           c $ C.showText label
-      drawEventFrame (LongEvent t1 t2 e) = do
+      drawEventFrame (LongEvent (t1,_) (t2,_) e) = do
         let (Point x1 cy)  = pmap (LValue t1, LValue e)
         let (Point x2 cy') = pmap (LValue t2, LValue e) -- Assume cy' == cy (pmap is coordinate-wise)
         framedRect (plot_event_long_linestyle_ p e) $ Rect
@@ -114,7 +115,7 @@ plotAllPointsEvent :: PlotEvent t e -> ([t], [e])
 plotAllPointsEvent p = let (ts, es) = unzip (map decomp d) in (concat ts, es)
   where
     d = plot_event_data_ p
-    decomp (PulseEvent t     e) = ([t],     e)
-    decomp (LongEvent  t1 t2 e) = ([t1,t2], e)
+    decomp (PulseEvent t             e) = ([t],     e)
+    decomp (LongEvent  (t1,_) (t2,_) e) = ([t1,t2], e)
 
 $( deriveAccessors ''PlotEvent )

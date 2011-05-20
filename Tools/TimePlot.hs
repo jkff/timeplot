@@ -345,7 +345,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
       KindDots            -> withAnyOrdinate $ plotTrackDots      name es
       KindSum       bs ss -> withAnyOrdinate $ plotTrackSum       name es bs ss
       KindCumSum    ss    -> withAnyOrdinate $ plotTrackCumSum    name es ss
-      KindDuration  sk    -> plotWithKind       name sk (edges2durations (edges es) minTime maxTime)
+      KindDuration  sk    -> plotWithKind       name sk (edges2durations (edges es) minTime maxTime name)
       KindWithin    _ _   -> error "KindDuration should not be plotted"
       KindNone            -> error "KindNone should not be plotted"
 
@@ -539,13 +539,15 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
         layout1_grid_last ^= True $
         defaultLayout1
 
-edges2durations :: forall t. (Ord t, HasDelta t) => [(t,S.ByteString,Edge)] -> t -> t -> [(t,InEvent)]
-edges2durations tes minTime maxTime = [(t2, InValue track $ toSeconds (t2 `sub` t1) (undefined::t)) | (track,LongEvent t1 t2 _) <- edges2events tes minTime maxTime]
+edges2durations :: forall t. (Ord t, HasDelta t) => [(t,S.ByteString,Edge)] -> t -> t -> S.ByteString -> [(t,InEvent)]
+edges2durations tes minTime maxTime commonTrack = 
+    [(t2, InValue commonTrack $ toSeconds (t2 `sub` t1) (undefined::t)) 
+    | (track, LongEvent (t1,True) (t2,True) _) <- edges2events tes minTime maxTime]
 
 edges2events :: (Ord t) => [(t,S.ByteString,Edge)] -> t -> t -> [(S.ByteString,Event t Status)]
 edges2events tes minTime maxTime = snd $ RWS.execRWS (mapM_ step tes >> flush) () M.empty 
   where
-    getTrack s = M.findWithDefault (undefined, 0, emptyStatus) s `fmap` RWS.get 
+    getTrack s = M.findWithDefault (minTime, 0, emptyStatus) s `fmap` RWS.get 
     putTrack s t = RWS.get >>= RWS.put . M.insert s t
     trackCase s whenZero withNonzero = do
       (t0, numActive, st) <- getTrack s
@@ -558,17 +560,17 @@ edges2events tes minTime maxTime = snd $ RWS.execRWS (mapM_ step tes >> flush) (
 
     step (t,s,Pulse st) = RWS.tell [(s, PulseEvent t st)]
     step (t,s,SetTo st) = trackCase s (putTrack s (t, 1, st))
-                                      (\t0 n st0 -> RWS.tell [(s, LongEvent t0 t st0)] >> 
+                                      (\t0 n st0 -> RWS.tell [(s, LongEvent (t0,True) (t,True) st0)] >> 
                                                     putTrack s (t, n, st))
     step (t,s,Rise)     = trackCase s (putTrack s (t, 1, emptyStatus)) 
                                       (\t0 n st -> putTrack s (t, n+1, st))
     step (t,s,Fall)     = do
       (t0, numActive, st) <- getTrack s
       case numActive of
-        1 -> RWS.tell [(s, LongEvent t0 t st)] >> killTrack s
+        1 -> RWS.tell [(s, LongEvent (t0,True) (t,True) st)] >> killTrack s
         n -> putTrack s (t0, max 0 (n-1), st)
 
-    flush = RWS.get >>= mapM_ (\(s, (t0,_,st)) -> RWS.tell [(s, LongEvent t0 maxTime st)]) . M.toList
+    flush = RWS.get >>= mapM_ (\(s, (t0,_,st)) -> RWS.tell [(s, LongEvent (t0,True) (maxTime,False) st)]) . M.toList
 
 edges2bins :: forall t. (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> [(t,S.ByteString,Edge)] -> [((t,t), [(S.ByteString,Double)])]
 edges2bins binSize minTime maxTime es = snd $ RWS.execRWS (mapM_ step es >> flush) () (M.empty, iterate (add binSize) minTime)
