@@ -124,6 +124,7 @@ data ChartKind t = KindEvent
                | KindDuration  { subKind :: ChartKind t }
                | KindWithin    { mapName :: S.ByteString -> S.ByteString, subKind :: ChartKind t }
                | KindACount    { binSize :: Delta t }
+               | KindAPercent  { binSize :: Delta t, baseCount :: Double }
                | KindAFreq     { binSize :: Delta t }
                | KindQuantile  { binSize :: Delta t, quantiles :: [Double] }
                | KindBinFreq   { binSize :: Delta t, delims    :: [Double] }
@@ -204,6 +205,7 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
           Just bt -> showDelta t bt
 
         parseKind ["acount",  n  ] = KindACount    {binSize=read n}
+        parseKind ["apercent",n,b] = KindAPercent  {binSize=read n,baseCount=read b}
         parseKind ["afreq",   n  ] = KindAFreq     {binSize=read n}
         parseKind ["freq",    n  ] = KindFreq      {binSize=read n,style=BarsClustered}
         parseKind ["freq",    n,s] = KindFreq      {binSize=read n,style=parseStyle s}
@@ -331,6 +333,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
     plotWithKind :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
     plotWithKind name k es = case k of
       KindACount    bs    -> withAnyOrdinate $ plotTrackACount    name es bs
+      KindAPercent  bs b  -> withAnyOrdinate $ plotTrackAPercent  name es bs b
       KindAFreq     bs    -> withAnyOrdinate $ plotTrackAFreq     name es bs
       KindFreq      bs k  -> withAnyOrdinate $ plotTrackFreq      name es bs k
       KindHistogram bs k  -> withAnyOrdinate $ plotTrackHist      name es bs k
@@ -359,8 +362,8 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                   plot_bars_alignment ^= BarsLeft     $
                   defaultPlotBars
 
-    plotTrackACount :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
-    plotTrackACount name es bs = layoutWithTitle [plotBars plot] name
+    plotTrackActivity :: S.ByteString -> [(t,InEvent)] -> Delta t -> ([(S.ByteString, Double)] -> Double -> Double) -> Layout1 t Double
+    plotTrackActivity name es bs transform = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values      ^= barsData $
                    plot_bars_item_styles ^= itemStyles $
                    plot_bars_titles      ^= map show subTracks $
@@ -368,22 +371,18 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
             itemStyles = [(solidFillStyle (opaque c), Nothing) | c <- colors]
             bins = edges2bins bs minTime maxTime (edges es)
             subTracks = Set.toList $ Set.fromList [s | (_,sns) <- bins, (s,n) <- sns]
-            barsData = [(t, map (fromMaybe 0 . (`lookup` sns)) subTracks) 
+            barsData = [(t, map (transform sns . fromMaybe 0 . (`lookup` sns)) subTracks) 
                        | ((t,_),sns) <- edges2bins bs minTime maxTime (edges es), (s,n) <- sns]
 
+    plotTrackACount :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
+    plotTrackACount name es bs = plotTrackActivity name es bs (\_ -> id)
+
     plotTrackAFreq :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
-    plotTrackAFreq name es bs = layoutWithTitle [plotBars plot] name
-      where plot = plot_bars_values      ^= barsData $
-                   plot_bars_item_styles ^= itemStyles $
-                   plot_bars_titles      ^= map show subTracks $
-                   ourPlotBars
-            itemStyles = [(solidFillStyle (opaque c), Nothing) | c <- colors]
-            bins = edges2bins bs minTime maxTime (edges es)
-            subTracks = Set.toList $ Set.fromList [s | (_,sns) <- bins, (s,n) <- sns]
-            barsData = [(t, map ((/total) . fromMaybe 0 . (`lookup` sns)) subTracks) 
-                       | ((t,_),sns) <- edges2bins bs minTime maxTime (edges es), 
-                         let total = (\x -> if x==0 then 1 else x) $ sum [n | (s,n) <- sns], 
-                         (s,n) <- sns]
+    plotTrackAFreq name es bs = plotTrackActivity name es bs $ \sns -> 
+        let total = (\x -> if x==0 then 1 else x) $ sum [n | (s,n) <- sns] in (/total)
+
+    plotTrackAPercent :: S.ByteString -> [(t,InEvent)] -> Delta t -> Double -> Layout1 t Double
+    plotTrackAPercent name es bs b = plotTrackActivity name es bs (\_ x -> 100*x/b)
 
     plotTrackFreq  :: S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t Double
     plotTrackFreq  = plotTrackAtoms atoms2freqs
@@ -747,6 +746,8 @@ showHelp = mapM_ putStrLn [ "",
   "     'what was the average number of active events or impulses in that",
   "     interval'. When used inside 'within', the histogram is a stacked one,",
   "     with one vertical bar per subtrack in each bin.",
+  "  'apercent N B' is for activity percentages of a basis: like 'acount N',",
+  "     but instead of X you get 100*X/B",
   "  'afreq N' is for activity frequencies: it's like acount, but relative",
   "     rather than absolute - it only makes sense inside 'within', because",
   "     otherwise it would just always show a filled one-coloured bar in every bin.",
