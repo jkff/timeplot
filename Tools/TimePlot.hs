@@ -137,6 +137,8 @@ data ChartKind t = KindEvent
                | KindSum       { binSize :: Delta t, subtrackStyle :: SumSubtrackStyle }
                | KindNone
 
+data ZoomMode = ZoomInput | ZoomOutput
+
 data ConcreteConf t =
   ConcreteConf {
     inFile        :: FilePath,
@@ -145,6 +147,7 @@ data ConcreteConf t =
 
     fromTime      :: Maybe t,
     toTime        :: Maybe t,
+    zoomMode      :: ZoomMode,
     transformLabel :: t -> String -> String,
 
     outFile       :: FilePath,
@@ -171,7 +174,7 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
     readConf' :: forall t. (TimeAxis t) => (B.ByteString -> Maybe (t, B.ByteString)) -> ConcreteConf t
     readConf' parseTime = ConcreteConf {inFile=inFile, outFile=outFile, outFormat=outFormat, outResolution=outRes,
                       chartKindF=chartKindF, parseTime=parseTime, fromTime=fromTime, toTime=toTime,
-                      transformLabel=transformLabel}
+                      transformLabel=transformLabel, zoomMode=zoomMode}
       where
         inFile      = single "input file"  "-if" (error "No input file (-if) specified")
         outFile     = single "output file" "-o"  (error "No output file (-o) specified (or have you specified '-of x' and built without --flags=gtk ?)")
@@ -198,7 +201,11 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
 
         fromTime    = fst `fmap` (parseTime . B.pack $ single "minimum time (inclusive)" "-fromTime" "")
         toTime      = fst `fmap` (parseTime . B.pack $ single "maximum time (exclusive)" "-toTime"   "")
-        baseTime    = fst `fmap` (parseTime . B.pack $ single "base time"                "-baseTime"   "")
+        baseTime    = fst `fmap` (parseTime . B.pack $ single "base time"                "-baseTime" "")
+
+        zoomMode = case single "zoom mode (input/output)" "-zoomMode" "input" of
+          "input"  -> ZoomInput
+          "output" -> ZoomOutput
 
         transformLabel t s = case baseTime of
           Nothing -> s
@@ -286,10 +293,11 @@ makeChart :: forall t . TimeAxis t =>
              (S.ByteString -> [ChartKind t]) -> 
              [(t, InEvent)] ->
              Maybe t -> Maybe t ->
+             ZoomMode -> 
              (t -> String -> String) -> 
              Renderable ()
-makeChart chartKindF []      minT maxT transformLabel = emptyRenderable
-makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked plots
+makeChart chartKindF []      minT maxT zoomMode transformLabel = emptyRenderable
+makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sStacked plots
   where
     events :: [(t, InEvent)]
     events@((t0,_):_) = sortBy (comparing (\(t,_)-> t)) events0
@@ -316,15 +324,21 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
           | f x <= f y = x : mergeOn f xs (y:ys)
           | otherwise  = y : mergeOn f (x:xs) ys
 
-    minTime = case minT of Just t -> t ; Nothing -> head times
-    maxTime = case maxT of Just t -> t ; Nothing -> last times
+    minInTime  = case (zoomMode, minT) of (ZoomInput,  Just t) -> t ; _ -> head times
+    maxInTime  = case (zoomMode, maxT) of (ZoomInput,  Just t) -> t ; _ -> last times
+
+    minOutTime = case (zoomMode, minT) of (ZoomOutput, Just t) -> t ; _ -> head times
+    maxOutTime = case (zoomMode, maxT) of (ZoomOutput, Just t) -> t ; _ -> last times
 
     times             :: [t]
     times             = sort $ [t | tes <- M.elems track2events, (t,_)<- tes]
 
     commonTimeAxis    :: AxisData t
-    commonTimeAxis    = transformLabels $ autoAxis ([minTime] ++ times ++ [maxTime])
+    commonTimeAxis    = transformLabels $ autoAxis axisTimes
       where
+        axisTimes = case zoomMode of
+          ZoomInput  -> [minInTime] ++ times ++ [maxInTime]
+          ZoomOutput -> [minOutTime] ++ filter (\x -> x >= minOutTime && x <= maxOutTime) times ++ [maxOutTime]
         transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
 
     plotTrack :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
@@ -345,7 +359,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
       KindDots            -> withAnyOrdinate $ plotTrackDots      name es
       KindSum       bs ss -> withAnyOrdinate $ plotTrackSum       name es bs ss
       KindCumSum    ss    -> withAnyOrdinate $ plotTrackCumSum    name es ss
-      KindDuration  sk    -> plotWithKind       name sk (edges2durations (edges es) minTime maxTime name)
+      KindDuration  sk    -> plotWithKind       name sk (edges2durations (edges es) minInTime maxInTime name)
       KindWithin    _ _   -> error "KindDuration should not be plotted"
       KindNone            -> error "KindNone should not be plotted"
 
@@ -369,10 +383,10 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
                    plot_bars_titles      ^= map show subTracks $
                    ourPlotBars
             itemStyles = [(solidFillStyle (opaque c), Nothing) | c <- colors]
-            bins = edges2bins bs minTime maxTime (edges es)
+            bins = edges2bins bs minInTime maxInTime (edges es)
             subTracks = Set.toList $ Set.fromList [s | (_,sns) <- bins, (s,n) <- sns]
             barsData = [(t, map (transform sns . fromMaybe 0 . (`lookup` sns)) subTracks) 
-                       | ((t,_),sns) <- edges2bins bs minTime maxTime (edges es), (s,n) <- sns]
+                       | ((t,_),sns) <- edges2bins bs minInTime maxInTime (edges es), (s,n) <- sns]
 
     plotTrackACount :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
     plotTrackACount name es bs = plotTrackActivity name es bs (\_ -> id)
@@ -408,7 +422,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
     -- TODO Multiple tracks
     plotTrackEvent :: S.ByteString -> [(t,InEvent)] -> Layout1 t Status
     plotTrackEvent     name es       = layoutWithTitle [toPlot plot] name
-      where plot = plot_event_data           ^= dropTrack (edges2events (edges es) minTime maxTime) $
+      where plot = plot_event_data           ^= dropTrack (edges2events (edges es) minInTime maxInTime) $
                    plot_event_long_fillstyle ^= toFillStyle             $
                    plot_event_label          ^= toLabel                 $
                    defaultPlotEvent
@@ -492,7 +506,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
 
     plotTrackCumSum :: S.ByteString -> [(t,InEvent)] -> SumSubtrackStyle -> Layout1 t Double
     plotTrackCumSum name es SumOverlayed = plotLines name rows
-      where rows = [(track, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minTime, 0) vs) | (track, vs) <- groupByTrack (values es)]
+      where rows = [(track, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minInTime, 0) vs) | (track, vs) <- groupByTrack (values es)]
     plotTrackCumSum name es SumStacked = plotLines name rows
       where vals = values es
             allTracks = Set.toList $ Set.fromList [track | (t, track, v) <- vals]
@@ -501,7 +515,7 @@ makeChart chartKindF events0 minT maxT transformLabel = renderLayout1sStacked pl
             rows = groupByTrack [(t, track, v) | (t, tvs) <- rowsT, (track,v) <- tvs]
 
             rowsT :: [(t, [(S.ByteString, Double)])]
-            rowsT = (minTime, zip allTracks (repeat 0)) : St.evalState (mapM addDataPoint vals) M.empty
+            rowsT = (minInTime, zip allTracks (repeat 0)) : St.evalState (mapM addDataPoint vals) M.empty
             
             addDataPoint (t, track, v) = do
               St.modify (M.insertWith (+) track v)
@@ -705,6 +719,10 @@ showHelp = mapM_ putStrLn [ "",
   "               (formatted according to -tf)",
   "  -baseTime  - display time difference with this value instead of absolute time",
   "               (formatted according to -tf)",
+  "  -zoomMode M- whether -fromTime and -toTime filter the input or the output:",
+  "               zooming input (dropping events outside interval) may be faster,",
+  "               but zooming output will be more accurate for history-dependent",
+  "               graphs like activity graphs. M is 'input' or 'output'.",
   "",
   "Input format: lines of the following form:",
   "1234 >A - at time 1234, activity A has begun",
@@ -803,9 +821,12 @@ mainWithArgs args = do
         ConcreteConf {
             parseTime=parseTime, inFile=inFile, chartKindF=chartKindF,
             outFile=outFile, outResolution=outResolution,
-            fromTime=fromTime, toTime=toTime, transformLabel=transformLabel} -> do
+            fromTime=fromTime, toTime=toTime, transformLabel=transformLabel, zoomMode=zoomMode} -> do
           source <- readSource parseTime inFile
-          let source' = zoom source fromTime toTime
-          let chart = makeChart chartKindF source' fromTime toTime transformLabel
+          let source' = case zoomMode of {
+              ZoomInput  -> zoom source fromTime toTime ;
+              ZoomOutput -> source
+            }
+          let chart = makeChart chartKindF source' fromTime toTime zoomMode transformLabel
           let (w,h) = outResolution
           render chart w h outFile
