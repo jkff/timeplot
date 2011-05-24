@@ -1,5 +1,5 @@
 name: timeplot
-version: 0.3.5
+version: 0.3.6
 cabal-version: >=1.6
 build-type: Simple
 license: BSD3
@@ -21,16 +21,10 @@ source-repository head
     type: git
     location: git://github.com/jkff/timeplot.git
 
-flag gtk
-    description: enable output to a gtk window (-of x)
-    default: False
-
 executable tplot
     main-is: Tools/TimePlot.hs
     buildable: True
-    if flag(gtk)
-      cpp-options: -DHAVE_GTK
-    ghc-options: -O2
+    ghc-options: -O2 -rtsopts
     other-modules: Graphics.Rendering.Chart.Event
     build-depends: Chart >=0.14, base >=3 && <5, bytestring -any,
                    bytestring-lexing -any, cairo -any, colour -any, containers -any,

@@ -29,9 +29,7 @@ import Data.Time.Parse
 import Data.Accessor
 
 import Graphics.Rendering.Chart
-#if HAVE_GTK
 import Graphics.Rendering.Chart.Gtk
-#endif
 import Graphics.Rendering.Chart.Grid
 import Graphics.Rendering.Chart.Plot
 import Graphics.Rendering.Chart.Event
@@ -65,9 +63,7 @@ data InEvent = InEdge  {evt_track :: S.ByteString, evt_edge :: Edge}
              deriving (Show)
 
 data OutFormat = PNG | PDF | PS | SVG
-#if HAVE_GTK
                | Window
-#endif
 
 class HasDelta t where
   type Delta t :: *
@@ -177,12 +173,10 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
                       transformLabel=transformLabel, zoomMode=zoomMode}
       where
         inFile      = single "input file"  "-if" (error "No input file (-if) specified")
-        outFile     = single "output file" "-o"  (error "No output file (-o) specified (or have you specified '-of x' and built without --flags=gtk ?)")
+        outFile     = single "output file" "-o"  (error "No output file (-o) specified")
         outFormat   = maybe PNG id $ lookup (single "output format" "-of" (name2format outFile)) $
             [("png",PNG), ("pdf",PDF), ("ps",PS), ("svg",SVG)
-#if HAVE_GTK
             , ("x",Window)
-#endif
             ]
           where
             name2format = reverse . takeWhile (/='.') . reverse
@@ -690,8 +684,7 @@ showHelp = mapM_ putStrLn [ "",
   "             [-fromTime TIME] [-toTime TIME] [-baseTime TIME]",
   "  -o  OFILE  - output file (required if -of is not x)",
   "  -of        - output format (x means draw result in a window, default:",
-  "               extension of -o); x is only available if you installed",
-  "               timeplot with --flags=gtk",
+  "               extension of -o)",
   "  -or        - output resolution (default 640x480)",
   "  -if IFILE  - input file; '-' means 'read from stdin'",
   "  -tf TF     - time format: 'num' means that times are floating-point",
@@ -813,9 +806,7 @@ mainWithArgs args = do
           PDF    -> renderableToPDFFile ;
           PS     -> renderableToPSFile  ;
           SVG    -> renderableToSVGFile ;
-#if HAVE_GTK
           Window -> \c w h f -> renderableToWindow c w h
-#endif
         }
       case conf of
         ConcreteConf {
