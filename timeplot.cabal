@@ -1,5 +1,5 @@
 name: timeplot
-version: 0.3.6
+version: 0.3.7
 cabal-version: >=1.6
 build-type: Simple
 license: BSD3
@@ -24,7 +24,7 @@ source-repository head
 executable tplot
     main-is: Tools/TimePlot.hs
     buildable: True
-    ghc-options: -O2 -rtsopts
+    ghc-options: -rtsopts
     other-modules: Graphics.Rendering.Chart.Event
     build-depends: Chart >=0.14, base >=3 && <5, bytestring -any,
                    bytestring-lexing -any, cairo -any, colour -any, containers -any,

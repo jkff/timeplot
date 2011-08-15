@@ -294,21 +294,21 @@ makeChart chartKindF []      minT maxT zoomMode transformLabel = emptyRenderable
 makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sStacked plots
   where
     events :: [(t, InEvent)]
-    events@((t0,_):_) = sortBy (comparing (\(t,_)-> t)) events0
+    events@((t0,_):_) = {-# SCC "sortEvents" #-} sortBy (comparing (\(t,_)-> t)) events0
 
     track2events :: M.Map S.ByteString [(t, InEvent)]
-    track2events = reverse `fmap` foldl' insert M.empty [(evt_track e, x) | x@(t, e) <- events]
+    track2events = {-# SCC "track2events" #-} reverse `fmap` foldl' insert M.empty [(evt_track e, x) | x@(t, e) <- events]
       where insert m (s, r) = M.alter (Just . maybe [r] (r:)) s m
 
-    plots          = [ plotTrack k kind es | (k, es) <- M.toList track2events,
+    plots          = {-# SCC "plots" #-} [ plotTrack k kind es | (k, es) <- M.toList track2events,
                                              kind <- chartKindF k,
                                              case kind of {KindNone -> False ; KindWithin _ _ -> False ; _ -> True} ] ++
                      withinPlots
 
-    withinPlots  = [ plotWithKind name k es | (name, (k,es)) <- M.toList withinTracks ]
+    withinPlots  = {-# SCC "withinPlots" #-} [ plotWithKind name k es | (name, (k,es)) <- M.toList withinTracks ]
       where
-        withinTracks = M.fromListWith (\(ka,as) (kb,bs) -> (ka,mergeOn fst as bs)) components
-        components = [ (mn k, (sk, es))
+        withinTracks = {-# SCC "withinTracks" #-} M.fromListWith (\(ka,as) (kb,bs) -> (ka,mergeOn fst as bs)) components
+        components = {-# SCC "components" #-} [ (mn k, (sk, es))
                      | (k, es) <- M.toList track2events,
                        kind <- chartKindF k,
                        Just (sk,mn) <- [case kind of {KindWithin mn sk -> Just (sk,mn) ; _ -> Nothing}]]
@@ -325,10 +325,10 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
     maxOutTime = case (zoomMode, maxT) of (ZoomOutput, Just t) -> t ; _ -> last times
 
     times             :: [t]
-    times             = sort $ [t | tes <- M.elems track2events, (t,_)<- tes]
+    times             = {-# SCC "times" #-} sort $ [t | tes <- M.elems track2events, (t,_)<- tes]
 
     commonTimeAxis    :: AxisData t
-    commonTimeAxis    = transformLabels $ autoAxis axisTimes
+    commonTimeAxis    = {-# SCC "commonTimeAxis" #-} transformLabels $ autoAxis axisTimes
       where
         axisTimes = case zoomMode of
           ZoomInput  -> [minInTime] ++ times ++ [maxInTime]
@@ -336,10 +336,10 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
         transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
 
     plotTrack :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
-    plotTrack name kind es = plotWithKind name kind es
+    plotTrack name kind es = {-# SCC "plotTrack" #-} plotWithKind name kind es
 
     plotWithKind :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
-    plotWithKind name k es = case k of
+    plotWithKind name k es = {-# SCC "plotWithKind" #-} case k of
       KindACount    bs    -> withAnyOrdinate $ plotTrackACount    name es bs
       KindAPercent  bs b  -> withAnyOrdinate $ plotTrackAPercent  name es bs b
       KindAFreq     bs    -> withAnyOrdinate $ plotTrackAFreq     name es bs
@@ -371,7 +371,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
                   defaultPlotBars
 
     plotTrackActivity :: S.ByteString -> [(t,InEvent)] -> Delta t -> ([(S.ByteString, Double)] -> Double -> Double) -> Layout1 t Double
-    plotTrackActivity name es bs transform = layoutWithTitle [plotBars plot] name
+    plotTrackActivity name es bs transform = {-# SCC "plotTrackActivity" #-} layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values      ^= barsData $
                    plot_bars_item_styles ^= itemStyles $
                    plot_bars_titles      ^= map show subTracks $
@@ -432,7 +432,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
                    ourPlotBars
             -- TODO Multiple tracks
             vs = [(t,v) | (t,_,v) <- values es]
-            quantileStyles = none:(zip (map (solidFillStyle . opaque) colors) [Just $ solidLine 1 (opaque black) | i <- [0..n+1]])
+            quantileStyles = none:(zip (map (solidFillStyle . opaque) colors) [Nothing | i <- [0..n+1]])
             quantileTitles = [""]++[show p1++".."++show p2++"%" | (p1,p2) <- lag percents ]
               where
                 percents = map (floor . (*100.0)) $ [0.0] ++ qs ++ [1.0]
@@ -468,14 +468,14 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
                    plot_bars_item_styles ^= binStyles $
                    plot_bars_titles      ^= "":titles $
                    ourPlotBars
-            binStyles = none:[(solidFillStyle (clr i), Just $ solidLine 1 (opaque black))
+            binStyles = none:[(solidFillStyle (clr i), Nothing)
                              | (i,_) <- [0..]`zip`titles]
 
     none = (solidFillStyle transparent, Nothing)
     toBars tvs = [(t,diffs vs) | (t,vs) <- tvs]
     diffs xs = zipWith (-) xs (0:xs)
 
-    groupByTrack xs = M.toList $ sort `fmap` M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- xs]
+    groupByTrack xs = {-# SCC "groupByTrack" #-} M.toList $ sort `fmap` M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- xs]
 
     plotLines :: S.ByteString -> [(S.ByteString, [(t,Double)])] -> Layout1 t Double
     plotLines name vss = layoutWithTitle (map toPlot plots) name
@@ -495,7 +495,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
                      plot_points_style  ^= hollowCircles 4 1 color $
                      plot_points_title  ^= S.unpack subtrack $
                      defaultPlotPoints
-                     | (subtrack, vs) <- groupByTrack (values es)
+                     | (subtrack, vs) <- {-# SCC "inDots" #-} groupByTrack (values es)
                      | color <- map opaque colors]
 
     plotTrackCumSum :: S.ByteString -> [(t,InEvent)] -> SumSubtrackStyle -> Layout1 t Double
