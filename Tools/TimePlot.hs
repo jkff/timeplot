@@ -607,7 +607,7 @@ edges2bins binSize minTime maxTime es = snd $ RWS.execRWS (mapM_ step es >> flus
                else step'' ev
     step'' ev@(t,s,e) = do (t1,t2) <- getBin; when (t < t1 || t >= t2) (error "Outside bin"); step' ev
     step' (t, s, SetTo _) = modState s t id
-    step' (t, s, Pulse _) = modState s t id
+    step' (t, s, Pulse _) = modState s t $ \(area, start, nopen, npulse) -> (area,                                   t, nopen,   npulse+1)
     step' (t, s, Rise)    = modState s t $ \(area, start, nopen, npulse) -> (area+toSeconds (t `sub` start) t*nopen, t, nopen+1, npulse)
     step' (t, s, Fall)    = modState s t $ \(area, start, nopen, npulse) -> (area+toSeconds (t `sub` start) t*nopen, t, nopen-1, npulse)
     flush                 = getBin >>= \(t1,t2) -> when (t2 <= maxTime) (flushBin >> flush)
