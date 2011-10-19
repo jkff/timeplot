@@ -19,7 +19,7 @@ import Data.Char
 import Text.Regex.TDFA
 import Text.Regex.TDFA.ByteString
 
-import System
+import System.Environment
 import System.Exit
 import System.Console.GetOpt
 
