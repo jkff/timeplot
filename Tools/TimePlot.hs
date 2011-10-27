@@ -594,7 +594,7 @@ edges2bins binSize minTime maxTime es = snd $ RWS.execRWS (mapM_ step es >> flus
       bin@(t1,t2) <- getBin
       states <- getStates
       let binSizeSec = toSeconds (t2 `sub` t1) t1
-      RWS.tell [(bin, [(s, (fromIntegral npulse/binSizeSec + area + toSeconds (t2 `sub` start) t2*nopen)/binSizeSec) | (s,(area,start,nopen,npulse)) <- states])]
+      RWS.tell [(bin, [(s, (fromIntegral npulse + area + toSeconds (t2 `sub` start) t2*nopen)/binSizeSec) | (s,(area,start,nopen,npulse)) <- states])]
       forM_ states $ \(s, (area,start,nopen,_)) -> putState s (0,t2,nopen,0)
       nextBin
 
