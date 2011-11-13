@@ -246,14 +246,13 @@ getArg :: String -> Int -> [String] -> [[String]]
 getArg name arity args = [take arity as | (t:as) <- tails args, t==name]
 
 readSource :: (Show t) => (B.ByteString -> Maybe (t,B.ByteString)) -> FilePath -> IO [(t, InEvent)]
-readSource readTime f = (justs . map parseLine . blines) `fmap` (if f=="-" then B.getContents else B.readFile f)
+readSource readTime f = (map parseLine . filter (not . B.null) . blines) `fmap` (if f=="-" then B.getContents else B.readFile f)
   where
-    justs xs = [x | Just x <- xs]
     blines   = map pruneLF . B.split '\n'
     pruneLF b | not (B.null b) && (B.last b == '\r') = B.init b
               | otherwise                            = b
     strict   = S.concat . B.toChunks
-    parseLine s = do
+    parseLine s = (\x -> case x of { Just e -> e; Nothing -> error $ "Unparseable input line: " ++ B.unpack s }) $ do
       (t, s') <- readTime s
       (_, s'') <- B.uncons s'
       (c,rest) <- B.uncons s''
