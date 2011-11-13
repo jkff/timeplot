@@ -132,6 +132,7 @@ data ChartKind t = KindEvent
                | KindCumSum    { subtrackStyle :: SumSubtrackStyle }
                | KindSum       { binSize :: Delta t, subtrackStyle :: SumSubtrackStyle }
                | KindNone
+               | KindUnspecified -- Causes an error message 
 
 data ZoomMode = ZoomInput | ZoomOutput
 
@@ -226,9 +227,10 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
         parseKind (('w':'i':'t':'h':'i':'n':'[':sep:"]"):ws)
                                    = KindWithin    {subKind=parseKind ws, mapName = fst . S.break (==sep)}
         parseKind ["none"        ] = KindNone
+        parseKind ["unspecified" ] = KindUnspecified
         parseKind ws               = error ("Unknown diagram kind " ++ unwords ws)
 
-        defaultKindMinus = parseKind $ words $ single "default kind" "-dk" "none"
+        defaultKindMinus = parseKind $ words $ single "default kind" "-dk" "unspecified"
         defaultKindsPlus = map (parseKind . words . head) $ getArg "+dk" 1 args
 
         parseStyle "stacked"   = BarsStacked
@@ -354,8 +356,9 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
       KindSum       bs ss -> withAnyOrdinate $ plotTrackSum       name es bs ss
       KindCumSum    ss    -> withAnyOrdinate $ plotTrackCumSum    name es ss
       KindDuration  sk    -> plotWithKind       name sk (edges2durations (edges es) minInTime maxInTime name)
-      KindWithin    _ _   -> error "KindDuration should not be plotted"
-      KindNone            -> error "KindNone should not be plotted"
+      KindWithin    _ _   -> error $ "KindDuration should not be plotted: track " ++ show name
+      KindNone            -> error $ "KindNone should not be plotted: track " ++ show name
+      KindUnspecified     -> error $ "Kind not specified for track " ++ show name ++ " (have you misspelled -dk or any of -k arguments?)"
 
     edges  :: [(t,InEvent)] -> [(t,S.ByteString,Edge)]
     values :: [(t,InEvent)] -> [(t,S.ByteString,Double)]
