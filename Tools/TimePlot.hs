@@ -188,7 +188,6 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
             [(Cut,        matches regex, parseKind (words kind)) | [regex,kind] <- getArg "-k" 2 args] ++
             [(Accumulate, matches regex, parseKind (words kind)) | [regex,kind] <- getArg "+k" 2 args]
           where
-            ifNull xs y = case xs of { [] -> [y] ; _ -> xs }
             kindByRegex rks s = (defaultKindsPlus ++
                                 [k | (Accumulate, p, k) <- rks, p s] ++
                                 [case [k | (Cut, p, k) <- rks, p s] of { [] -> defaultKindMinus; k:_ -> k }])
@@ -207,27 +206,49 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
           Just bt -> showDelta t bt
 
         parseKind ["acount",  n  ] = KindACount    {binSize=read n}
+        parseKind ("acount":_)     = error "acount requires a single numeric argument, bin size, e.g.: -dk 'acount 1'"
         parseKind ["apercent",n,b] = KindAPercent  {binSize=read n,baseCount=read b}
+        parseKind ("apercent":_)   = error "apercent requires two numeric arguments: bin size and base value, e.g.: -dk 'apercent 1 480'"
         parseKind ["afreq",   n  ] = KindAFreq     {binSize=read n}
+        parseKind ("afreq":_)      = error "afreq requires a single numeric argument, bin size, e.g.: -dk 'afreq 1'"
         parseKind ["freq",    n  ] = KindFreq      {binSize=read n,style=BarsClustered}
         parseKind ["freq",    n,s] = KindFreq      {binSize=read n,style=parseStyle s}
+        parseKind ("freq":_)       = error $ "freq requires a single numeric argument, bin size, e.g.: -dk 'freq 1', " ++ 
+                                             "or two arguments, e.g.: -dk 'freq 1 clustered'"
         parseKind ["hist",    n  ] = KindHistogram {binSize=read n,style=BarsClustered}
         parseKind ["hist",    n,s] = KindHistogram {binSize=read n,style=parseStyle s}
+        parseKind ("hist":_)       = error $ "hist requires a single numeric argument, bin size, e.g.: -dk 'hist 1', " ++ 
+                                             "or two arguments, e.g.: -dk 'hist 1 clustered'"
         parseKind ["event"       ] = KindEvent
+        parseKind ("event":_)      = error "event requires no arguments"
         parseKind ["quantile",b,q] = KindQuantile  {binSize=read b, quantiles=read ("["++q++"]")}
+        parseKind ("quantile":_)   = error $ "quantile requres two arguments: bin size and comma-separated " ++ 
+                                             "(without spaces!) quantiles, e.g.: -dk 'quantile 1 0.5,0.75,0.9'"
         parseKind ["binf",    b,q] = KindBinFreq   {binSize=read b, delims   =read ("["++q++"]")}
+        parseKind ("binf":_)       = error $ "binf requres two arguments: bin size and comma-separated " ++ 
+                                             "(without spaces!) threshold values, e.g.: -dk 'binf 1 10,50,100,200,500'"
         parseKind ["binh",    b,q] = KindBinHist   {binSize=read b, delims   =read ("["++q++"]")}
+        parseKind ("binh":_)       = error $ "binh requres two arguments: bin size and comma-separated " ++ 
+                                             "(without spaces!) threshold values, e.g.: -dk 'binh 1 10,50,100,200,500'"
         parseKind ["lines"       ] = KindLines
+        parseKind ("lines":_)      = error "lines requires no arguments"
         parseKind ["dots"        ] = KindDots
+        parseKind ("dots":_)       = error "dots requires no arguments"
         parseKind ["cumsum"      ] = KindCumSum    {subtrackStyle=SumStacked}
         parseKind ["cumsum",  s  ] = KindCumSum    {subtrackStyle=parseSubtrackStyle s}
+        parseKind ("cumsum":_)     = error $ "cumsum requires zero or one argument (subtrack style), e.g.: " ++ 
+                                             "-dk cumsum or -dk 'cumsum stacked'"
         parseKind ["sum",     b  ] = KindSum       {binSize=read b, subtrackStyle=SumStacked}
         parseKind ["sum",     b,s] = KindSum       {binSize=read b, subtrackStyle=parseSubtrackStyle s}
+        parseKind ("sum":_)        = error $ "sum requires one or two arguments: bin size and optionally " ++ 
+                                             "subtrack style, e.g.: -dk 'sum 1' or -dk 'sum 1 stacked'"
         parseKind ("duration":ws)  = KindDuration  {subKind=parseKind ws}
         parseKind (('w':'i':'t':'h':'i':'n':'[':sep:"]"):ws)
                                    = KindWithin    {subKind=parseKind ws, mapName = fst . S.break (==sep)}
         parseKind ["none"        ] = KindNone
+        parseKind ("none":_)       = error "none requires no arguments"
         parseKind ["unspecified" ] = KindUnspecified
+        parseKind ("unspecified":_)= error "unspecified requires no arguments"
         parseKind ws               = error ("Unknown diagram kind " ++ unwords ws)
 
         defaultKindMinus = parseKind $ words $ single "default kind" "-dk" "unspecified"
