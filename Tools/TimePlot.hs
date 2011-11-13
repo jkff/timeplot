@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables, TypeFamilies, FlexibleContexts, GADTs, CPP, ParallelListComp #-}
+{-# LANGUAGE ScopedTypeVariables, TypeFamilies, ParallelListComp #-}
 module Main where
 
 import Control.Monad
@@ -108,12 +108,6 @@ instance HasDelta LocalTime where
 instance Read NominalDiffTime where
   readsPrec n s = [(fromSeconds i (undefined::LocalTime), s') | (i,s') <- readsPrec n s]
 
-class (Ord t, HasDelta t, PlotValue t, Show t, Show (Delta t), Read (Delta t)) => TimeAxis t
-
-instance TimeAxis Double
-
-instance TimeAxis LocalTime
-
 data SumSubtrackStyle = SumStacked | SumOverlayed
 
 data ChartKind t = KindEvent
@@ -138,27 +132,27 @@ data ZoomMode = ZoomInput | ZoomOutput
 
 data ConcreteConf t =
   ConcreteConf {
-    inFile        :: FilePath,
-    parseTime     :: B.ByteString -> Maybe (t, B.ByteString),
-    chartKindF    :: S.ByteString -> [ChartKind t],
+    inFile        :: !FilePath,
+    parseTime     :: !(B.ByteString -> Maybe (t, B.ByteString)),
+    chartKindF    :: !(S.ByteString -> [ChartKind t]),
 
-    fromTime      :: Maybe t,
-    toTime        :: Maybe t,
-    zoomMode      :: ZoomMode,
-    transformLabel :: t -> String -> String,
+    fromTime      :: !(Maybe t),
+    toTime        :: !(Maybe t),
+    zoomMode      :: !ZoomMode,
+    transformLabel :: !(t -> String -> String),
 
-    outFile       :: FilePath,
-    outFormat     :: OutFormat,
-    outResolution :: (Int,Int)
+    outFile       :: !FilePath,
+    outFormat     :: !OutFormat,
+    outResolution :: !(Int,Int)
   }
 
-data Conf = Conf { concreteConf :: ConcreteConf LocalTime }
+type Conf = ConcreteConf LocalTime
 
 data KindChoiceOperator = Cut | Accumulate
 
 readConf :: [String] -> Conf
 readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%OS")) of
-    "date":f -> Conf $ readConf' (strptime (B.pack $ unwords f))
+    "date":f -> readConf' (strptime (B.pack $ unwords f))
     _        -> error "Unrecognized time format (-tf)"
   where
     int2double = fromIntegral :: Int -> Double
@@ -183,10 +177,14 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
         outRes      = parseRes $ single "output resolution" "-or" "640x480"
           where
             parseRes s = case break (=='x') s of (h,_:v) -> (read h,read v)
-        chartKindF  = kindByRegex $
+        forceList :: [a] -> ()
+        forceList = foldr seq ()
+        chartKindF  = forceList [forceList plusKinds, forceList minusKinds, forceList defaultKindsPlus, defaultKindMinus `seq` ()] `seq` kindByRegex $
             [(Cut,        matches regex, parseKind (words kind)) | [regex,kind] <- getArg "-k" 2 args] ++
             [(Accumulate, matches regex, parseKind (words kind)) | [regex,kind] <- getArg "+k" 2 args]
           where
+            plusKinds  = [parseKind (words kind) | [regex, kind] <- getArg "+k" 2 args]
+            minusKinds = [parseKind (words kind) | [regex, kind] <- getArg "-k" 2 args]
             kindByRegex rks s = (defaultKindsPlus ++
                                 [k | (Accumulate, p, k) <- rks, p s] ++
                                 [case [k | (Cut, p, k) <- rks, p s] of { [] -> defaultKindMinus; k:_ -> k }])
@@ -204,6 +202,7 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
           Nothing -> s
           Just bt -> showDelta t bt
 
+        parseKind :: [String] -> ChartKind LocalTime
         parseKind ["acount",  n  ] = KindACount    {binSize=read n}
         parseKind ("acount":_)     = error "acount requires a single numeric argument, bin size, e.g.: -dk 'acount 1'"
         parseKind ["apercent",n,b] = KindAPercent  {binSize=read n,baseCount=read b}
@@ -391,7 +390,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
                   plot_bars_alignment ^= BarsLeft     $
                   defaultPlotBars
 
-    plotTrackActivity :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> ([(S.ByteString, Double)] -> Double -> Double) -> Layout1 LocalTime Double
+    plotTrackActivity :: S.ByteString -> [(LocalTime,InEvent)] -> NominalDiffTime -> ([(S.ByteString, Double)] -> Double -> Double) -> Layout1 LocalTime Double
     plotTrackActivity name es bs transform = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values      ^= barsData $
                    plot_bars_item_styles ^= itemStyles $
@@ -403,25 +402,25 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
             barsData = [(t, map (transform sns . fromMaybe 0 . (`lookup` sns)) subTracks) 
                        | ((t,_),sns) <- edges2bins bs minInTime maxInTime (edges es), (s,n) <- sns]
 
-    plotTrackACount :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> Layout1 LocalTime Double
+    plotTrackACount :: S.ByteString -> [(LocalTime,InEvent)] -> NominalDiffTime -> Layout1 LocalTime Double
     plotTrackACount name es bs = plotTrackActivity name es bs (\_ -> id)
 
-    plotTrackAFreq :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> Layout1 LocalTime Double
+    plotTrackAFreq :: S.ByteString -> [(LocalTime,InEvent)] -> NominalDiffTime -> Layout1 LocalTime Double
     plotTrackAFreq name es bs = plotTrackActivity name es bs $ \sns -> 
         let total = (\x -> if x==0 then 1 else x) $ sum [n | (s,n) <- sns] in (/total)
 
-    plotTrackAPercent :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> Double -> Layout1 LocalTime Double
+    plotTrackAPercent :: S.ByteString -> [(LocalTime,InEvent)] -> NominalDiffTime -> Double -> Layout1 LocalTime Double
     plotTrackAPercent name es bs b = plotTrackActivity name es bs (\_ x -> 100*x/b)
 
-    plotTrackFreq  :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> PlotBarsStyle -> Layout1 LocalTime Double
+    plotTrackFreq  :: S.ByteString -> [(LocalTime,InEvent)] -> NominalDiffTime -> PlotBarsStyle -> Layout1 LocalTime Double
     plotTrackFreq  = plotTrackAtoms atoms2freqs
 
-    plotTrackHist  :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> PlotBarsStyle -> Layout1 LocalTime Int
+    plotTrackHist  :: S.ByteString -> [(LocalTime,InEvent)] -> NominalDiffTime -> PlotBarsStyle -> Layout1 LocalTime Int
     plotTrackHist  = plotTrackAtoms atoms2hist
 
     plotTrackAtoms :: (Num v, BarsPlotValue v) =>
                       ([S.ByteString] -> [S.ByteString] -> [v]) ->
-                      S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> PlotBarsStyle -> Layout1 LocalTime v
+                      S.ByteString -> [(LocalTime,InEvent)] -> NominalDiffTime -> PlotBarsStyle -> Layout1 LocalTime v
     plotTrackAtoms f name es bs k = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_style       ^= k           $
                    plot_bars_values      ^= vals        $
@@ -445,7 +444,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
             toFillStyle s = solidFillStyle . opaque $ fromMaybe lightgray (readColourName (statusColor s))
             toLabel     s = statusLabel s
 
-    plotTrackQuantile :: S.ByteString -> [(LocalTime,InEvent)] -> [Double] -> Delta LocalTime -> Layout1 LocalTime Double
+    plotTrackQuantile :: S.ByteString -> [(LocalTime,InEvent)] -> [Double] -> NominalDiffTime -> Layout1 LocalTime Double
     plotTrackQuantile  name es qs bs = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values  ^= toBars (byTimeBins (getQuantiles qs) bs t0 vs) $
                    plot_bars_item_styles ^= quantileStyles $
@@ -539,7 +538,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
               return (t, allTracks `zip` (scanl1 (+) trackSums))
 
 
-    plotTrackSum :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> SumSubtrackStyle -> Layout1 LocalTime Double
+    plotTrackSum :: S.ByteString -> [(LocalTime,InEvent)] -> NominalDiffTime -> SumSubtrackStyle -> Layout1 LocalTime Double
     plotTrackSum name es bs ss = plotLines name rows
       where groups    = groupByTrack (values es)
             allTracks = M.keys $ M.fromList groups
@@ -690,7 +689,7 @@ atoms2freqs as xs = map toFreq (atoms2hist as xs)
     n = length xs
     toFreq = if n==0 then const 0 else (\k -> fromIntegral k/fromIntegral n)
 
-zoom :: (TimeAxis t) => [(t, InEvent)] -> Maybe t -> Maybe t -> [(t, InEvent)]
+zoom :: (Ord t) => [(t, InEvent)] -> Maybe t -> Maybe t -> [(t, InEvent)]
 zoom events fromTime toTime = filter p events
   where
     p (t, _) = (maybe True (\ft -> t >= ft) fromTime) &&
@@ -818,25 +817,24 @@ main = do
   mainWithArgs args
 mainWithArgs args = do
   when (null args || args == ["--help"]) $ showHelp >> exitSuccess
-  case (readConf args) of
-    Conf conf -> do
-      let render = case (outFormat conf) of {
-          PNG    -> \c w h f -> const () `fmap` renderableToPNGFile c w h f;
-          PDF    -> renderableToPDFFile ;
-          PS     -> renderableToPSFile  ;
-          SVG    -> renderableToSVGFile ;
-          Window -> \c w h f -> renderableToWindow c w h
+  let !conf = readConf args
+  let render = case (outFormat conf) of {
+      PNG    -> \c w h f -> const () `fmap` renderableToPNGFile c w h f;
+      PDF    -> renderableToPDFFile ;
+      PS     -> renderableToPSFile  ;
+      SVG    -> renderableToSVGFile ;
+      Window -> \c w h f -> renderableToWindow c w h
+    }
+  case conf of
+    ConcreteConf {
+        parseTime=parseTime, inFile=inFile, chartKindF=chartKindF,
+        outFile=outFile, outResolution=outResolution,
+        fromTime=fromTime, toTime=toTime, transformLabel=transformLabel, zoomMode=zoomMode} -> do
+      source <- readSource parseTime inFile
+      let source' = case zoomMode of {
+          ZoomInput  -> zoom source fromTime toTime ;
+          ZoomOutput -> source
         }
-      case conf of
-        ConcreteConf {
-            parseTime=parseTime, inFile=inFile, chartKindF=chartKindF,
-            outFile=outFile, outResolution=outResolution,
-            fromTime=fromTime, toTime=toTime, transformLabel=transformLabel, zoomMode=zoomMode} -> do
-          source <- readSource parseTime inFile
-          let source' = case zoomMode of {
-              ZoomInput  -> zoom source fromTime toTime ;
-              ZoomOutput -> source
-            }
-          let chart = makeChart chartKindF source' fromTime toTime zoomMode transformLabel
-          let (w,h) = outResolution
-          render chart w h outFile
+      let chart = makeChart chartKindF source' fromTime toTime zoomMode transformLabel
+      let (w,h) = outResolution
+      render chart w h outFile
