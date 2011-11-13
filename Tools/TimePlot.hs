@@ -152,13 +152,12 @@ data ConcreteConf t =
     outResolution :: (Int,Int)
   }
 
-data Conf = forall t . (TimeAxis t) => Conf {concrete :: ConcreteConf t}
+data Conf = Conf { concreteConf :: ConcreteConf LocalTime }
 
 data KindChoiceOperator = Cut | Accumulate
 
 readConf :: [String] -> Conf
 readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%OS")) of
-    ["num"]  -> Conf $ readConf' readDouble
     "date":f -> Conf $ readConf' (strptime (B.pack $ unwords f))
     _        -> error "Unrecognized time format (-tf)"
   where
@@ -168,7 +167,7 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
       []    -> def
       _     -> error $ "Single argument expected for: "++desc++" ("++name++")"
 
-    readConf' :: forall t. (TimeAxis t) => (B.ByteString -> Maybe (t, B.ByteString)) -> ConcreteConf t
+    readConf' :: (B.ByteString -> Maybe (LocalTime, B.ByteString)) -> ConcreteConf LocalTime
     readConf' parseTime = ConcreteConf {inFile=inFile, outFile=outFile, outFormat=outFormat, outResolution=outRes,
                       chartKindF=chartKindF, parseTime=parseTime, fromTime=fromTime, toTime=toTime,
                       transformLabel=transformLabel, zoomMode=zoomMode}
@@ -305,20 +304,19 @@ readSource readTime f = (map parseLine . filter (not . B.null) . blines) `fmap` 
                   return (t, InValue (strict track) v)
         _   -> Nothing
 
-makeChart :: forall t . TimeAxis t =>
-             (S.ByteString -> [ChartKind t]) -> 
-             [(t, InEvent)] ->
-             Maybe t -> Maybe t ->
+makeChart :: (S.ByteString -> [ChartKind LocalTime]) -> 
+             [(LocalTime, InEvent)] ->
+             Maybe LocalTime -> Maybe LocalTime ->
              ZoomMode -> 
-             (t -> String -> String) -> 
+             (LocalTime -> String -> String) -> 
              Renderable ()
 makeChart chartKindF []      minT maxT zoomMode transformLabel = emptyRenderable
 makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sStacked plots
   where
-    events :: [(t, InEvent)]
+    events :: [(LocalTime, InEvent)]
     events@((t0,_):_) = sortBy (comparing (\(t,_)-> t)) events0
 
-    track2events :: M.Map S.ByteString [(t, InEvent)]
+    track2events :: M.Map S.ByteString [(LocalTime, InEvent)]
     track2events = reverse `fmap` foldl' insert M.empty [(evt_track e, x) | x@(t, e) <- events]
       where insert m (s, r) = M.alter (Just . maybe [r] (r:)) s m
 
@@ -346,10 +344,10 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
     minOutTime = case (zoomMode, minT) of (ZoomOutput, Just t) -> t ; _ -> head times
     maxOutTime = case (zoomMode, maxT) of (ZoomOutput, Just t) -> t ; _ -> last times
 
-    times             :: [t]
+    times             :: [LocalTime]
     times             = sort $ [t | tes <- M.elems track2events, (t,_)<- tes]
 
-    commonTimeAxis    :: AxisData t
+    commonTimeAxis    :: AxisData LocalTime
     commonTimeAxis    = transformLabels $ autoAxis axisTimes
       where
         axisTimes = case zoomMode of
@@ -357,10 +355,10 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
           ZoomOutput -> [minOutTime] ++ filter (\x -> x >= minOutTime && x <= maxOutTime) times ++ [maxOutTime]
         transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
 
-    plotTrack :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
+    plotTrack :: S.ByteString -> ChartKind LocalTime -> [(LocalTime, InEvent)] -> AnyLayout1 LocalTime
     plotTrack name kind es = plotWithKind name kind es
 
-    plotWithKind :: S.ByteString -> ChartKind t -> [(t, InEvent)] -> AnyLayout1 t
+    plotWithKind :: S.ByteString -> ChartKind LocalTime -> [(LocalTime, InEvent)] -> AnyLayout1 LocalTime
     plotWithKind name k es = case k of
       KindACount    bs    -> withAnyOrdinate $ plotTrackACount    name es bs
       KindAPercent  bs b  -> withAnyOrdinate $ plotTrackAPercent  name es bs b
@@ -380,20 +378,20 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
       KindNone            -> error $ "KindNone should not be plotted: track " ++ show name
       KindUnspecified     -> error $ "Kind not specified for track " ++ show name ++ " (have you misspelled -dk or any of -k arguments?)"
 
-    edges  :: [(t,InEvent)] -> [(t,S.ByteString,Edge)]
-    values :: [(t,InEvent)] -> [(t,S.ByteString,Double)]
-    atoms  :: [(t,InEvent)] -> [(t,S.ByteString,S.ByteString)]
+    edges  :: [(LocalTime,InEvent)] -> [(LocalTime,S.ByteString,Edge)]
+    values :: [(LocalTime,InEvent)] -> [(LocalTime,S.ByteString,Double)]
+    atoms  :: [(LocalTime,InEvent)] -> [(LocalTime,S.ByteString,S.ByteString)]
     edges  es = [(t,s,e) | (t,InEdge  s e) <- es]
     values es = [(t,s,v) | (t,InValue s v) <- es]
     atoms  es = [(t,s,a) | (t,InAtom  s a) <- es]
 
-    ourPlotBars :: (BarsPlotValue a) => PlotBars t a
+    ourPlotBars :: (BarsPlotValue a) => PlotBars LocalTime a
     ourPlotBars = plot_bars_spacing ^= BarsFixGap 0 0 $
                   plot_bars_style   ^= BarsStacked    $
                   plot_bars_alignment ^= BarsLeft     $
                   defaultPlotBars
 
-    plotTrackActivity :: S.ByteString -> [(t,InEvent)] -> Delta t -> ([(S.ByteString, Double)] -> Double -> Double) -> Layout1 t Double
+    plotTrackActivity :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> ([(S.ByteString, Double)] -> Double -> Double) -> Layout1 LocalTime Double
     plotTrackActivity name es bs transform = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values      ^= barsData $
                    plot_bars_item_styles ^= itemStyles $
@@ -405,25 +403,25 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
             barsData = [(t, map (transform sns . fromMaybe 0 . (`lookup` sns)) subTracks) 
                        | ((t,_),sns) <- edges2bins bs minInTime maxInTime (edges es), (s,n) <- sns]
 
-    plotTrackACount :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
+    plotTrackACount :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> Layout1 LocalTime Double
     plotTrackACount name es bs = plotTrackActivity name es bs (\_ -> id)
 
-    plotTrackAFreq :: S.ByteString -> [(t,InEvent)] -> Delta t -> Layout1 t Double
+    plotTrackAFreq :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> Layout1 LocalTime Double
     plotTrackAFreq name es bs = plotTrackActivity name es bs $ \sns -> 
         let total = (\x -> if x==0 then 1 else x) $ sum [n | (s,n) <- sns] in (/total)
 
-    plotTrackAPercent :: S.ByteString -> [(t,InEvent)] -> Delta t -> Double -> Layout1 t Double
+    plotTrackAPercent :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> Double -> Layout1 LocalTime Double
     plotTrackAPercent name es bs b = plotTrackActivity name es bs (\_ x -> 100*x/b)
 
-    plotTrackFreq  :: S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t Double
+    plotTrackFreq  :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> PlotBarsStyle -> Layout1 LocalTime Double
     plotTrackFreq  = plotTrackAtoms atoms2freqs
 
-    plotTrackHist  :: S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t Int
+    plotTrackHist  :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> PlotBarsStyle -> Layout1 LocalTime Int
     plotTrackHist  = plotTrackAtoms atoms2hist
 
     plotTrackAtoms :: (Num v, BarsPlotValue v) =>
                       ([S.ByteString] -> [S.ByteString] -> [v]) ->
-                      S.ByteString -> [(t,InEvent)] -> Delta t -> PlotBarsStyle -> Layout1 t v
+                      S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> PlotBarsStyle -> Layout1 LocalTime v
     plotTrackAtoms f name es bs k = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_style       ^= k           $
                    plot_bars_values      ^= vals        $
@@ -437,7 +435,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
             vs   = M.keys $ M.fromList $ [(a,()) | (_,a) <- as]
 
     -- TODO Multiple tracks
-    plotTrackEvent :: S.ByteString -> [(t,InEvent)] -> Layout1 t Status
+    plotTrackEvent :: S.ByteString -> [(LocalTime,InEvent)] -> Layout1 LocalTime Status
     plotTrackEvent     name es       = layoutWithTitle [toPlot plot] name
       where plot = plot_event_data           ^= dropTrack (edges2events (edges es) minInTime maxInTime) $
                    plot_event_long_fillstyle ^= toFillStyle             $
@@ -447,7 +445,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
             toFillStyle s = solidFillStyle . opaque $ fromMaybe lightgray (readColourName (statusColor s))
             toLabel     s = statusLabel s
 
-    plotTrackQuantile :: S.ByteString -> [(t,InEvent)] -> [Double] -> Delta t -> Layout1 t Double
+    plotTrackQuantile :: S.ByteString -> [(LocalTime,InEvent)] -> [Double] -> Delta LocalTime -> Layout1 LocalTime Double
     plotTrackQuantile  name es qs bs = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values  ^= toBars (byTimeBins (getQuantiles qs) bs t0 vs) $
                    plot_bars_item_styles ^= quantileStyles $
@@ -485,7 +483,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
         tvs  = [(t,v) | (t,_,v) <- values es]
         n    = length vs
 
-    plotTrackBars :: (BarsPlotValue a) => [(t,[a])] -> [String] -> S.ByteString -> (Int -> AlphaColour Double) -> Layout1 t a
+    plotTrackBars :: (BarsPlotValue a) => [(LocalTime,[a])] -> [String] -> S.ByteString -> (Int -> AlphaColour Double) -> Layout1 LocalTime a
     plotTrackBars values titles name clr = layoutWithTitle [plotBars plot] name
       where plot = plot_bars_values      ^= values    $
                    plot_bars_item_styles ^= binStyles $
@@ -500,7 +498,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
 
     groupByTrack xs = M.toList $ sort `fmap` M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- xs]
 
-    plotLines :: S.ByteString -> [(S.ByteString, [(t,Double)])] -> Layout1 t Double
+    plotLines :: S.ByteString -> [(S.ByteString, [(LocalTime,Double)])] -> Layout1 LocalTime Double
     plotLines name vss = layoutWithTitle (map toPlot plots) name
       where plots = [plot_lines_values ^= [vs] $ 
                      plot_lines_title  ^= S.unpack subtrack $ 
@@ -509,10 +507,10 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
                      | (subtrack, vs) <- vss
                      | color <- map opaque colors]
 
-    plotTrackLines :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
+    plotTrackLines :: S.ByteString -> [(LocalTime,InEvent)] -> Layout1 LocalTime Double
     plotTrackLines name es = plotLines name (groupByTrack (values es))
 
-    plotTrackDots :: S.ByteString -> [(t,InEvent)] -> Layout1 t Double
+    plotTrackDots :: S.ByteString -> [(LocalTime,InEvent)] -> Layout1 LocalTime Double
     plotTrackDots  name es = layoutWithTitle (map toPlot plots) name
       where plots = [plot_points_values ^= vs $
                      plot_points_style  ^= hollowCircles 4 1 color $
@@ -521,17 +519,17 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
                      | (subtrack, vs) <- groupByTrack (values es)
                      | color <- map opaque colors]
 
-    plotTrackCumSum :: S.ByteString -> [(t,InEvent)] -> SumSubtrackStyle -> Layout1 t Double
+    plotTrackCumSum :: S.ByteString -> [(LocalTime,InEvent)] -> SumSubtrackStyle -> Layout1 LocalTime Double
     plotTrackCumSum name es SumOverlayed = plotLines name rows
       where rows = [(track, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (minInTime, 0) vs) | (track, vs) <- groupByTrack (values es)]
     plotTrackCumSum name es SumStacked = plotLines name rows
       where vals = values es
             allTracks = Set.toList $ Set.fromList [track | (t, track, v) <- vals]
 
-            rows :: [(S.ByteString, [(t, Double)])]
+            rows :: [(S.ByteString, [(LocalTime, Double)])]
             rows = groupByTrack [(t, track, v) | (t, tvs) <- rowsT, (track,v) <- tvs]
 
-            rowsT :: [(t, [(S.ByteString, Double)])]
+            rowsT :: [(LocalTime, [(S.ByteString, Double)])]
             rowsT = (minInTime, zip allTracks (repeat 0)) : St.evalState (mapM addDataPoint vals) M.empty
             
             addDataPoint (t, track, v) = do
@@ -541,12 +539,12 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
               return (t, allTracks `zip` (scanl1 (+) trackSums))
 
 
-    plotTrackSum :: S.ByteString -> [(t,InEvent)] -> Delta t -> SumSubtrackStyle -> Layout1 t Double
+    plotTrackSum :: S.ByteString -> [(LocalTime,InEvent)] -> Delta LocalTime -> SumSubtrackStyle -> Layout1 LocalTime Double
     plotTrackSum name es bs ss = plotLines name rows
       where groups    = groupByTrack (values es)
             allTracks = M.keys $ M.fromList groups
             
-            rowsT :: [(t, M.Map S.ByteString Double)]
+            rowsT :: [(LocalTime, M.Map S.ByteString Double)]
             rowsT = byTimeBins (M.fromListWith (+)) bs t0 $ sort [(t, (track, v)) | (track, vs) <- groups, (t, v) <- vs]
             
             rowsT' = case ss of
@@ -556,10 +554,10 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
             stack :: M.Map S.ByteString Double -> [(S.ByteString, Double)]
             stack ss = zip allTracks (scanl1 (+) (map (\x -> M.findWithDefault 0 x ss) allTracks))
             
-            rows :: [(S.ByteString, [(t, Double)])]
+            rows :: [(S.ByteString, [(LocalTime, Double)])]
             rows  = M.toList $ sort `fmap` M.fromListWith (++) [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
 
-    layoutWithTitle :: (PlotValue a) => [Plot t a] -> S.ByteString -> Layout1 t a
+    layoutWithTitle :: (PlotValue a) => [Plot LocalTime a] -> S.ByteString -> Layout1 LocalTime a
     layoutWithTitle plots name =
         layout1_title ^= "" $
         layout1_plots ^= map Left plots $
@@ -710,12 +708,10 @@ showHelp = mapM_ putStrLn [ "",
   "               extension of -o)",
   "  -or        - output resolution (default 640x480)",
   "  -if IFILE  - input file; '-' means 'read from stdin'",
-  "  -tf TF     - time format: 'num' means that times are floating-point",
-  "               numbers (for instance, seconds elapsed since an event);",
-  "               'date PATTERN' means that times are dates in the format",
-  "               specified by PATTERN - see",
-  "               http://linux.die.net/man/3/strptime, for example,",
-  "               [%Y-%m-%d %H:%M:%S] parses dates like [2009-10-20 16:52:43].",
+  "  -tf TF     - time format: -tf 'date PATTERN' means that times are dates in the format",
+  "               specified by PATTERN - see http://linux.die.net/man/3/strptime, ",
+  "               for example, -tf 'date [%Y-%m-%d %H:%M:%S]' parses dates like ",
+  "               '[2009-10-20 16:52:43]'.",
   "               We also support %OS for fractional seconds (i.e. %OS will",
   "               parse 12.4039 or 12,4039) and %^[+-][N]s for ten-powers ",
   "               of seconds since epoch, for example %^-3s is ms since epoch.",
