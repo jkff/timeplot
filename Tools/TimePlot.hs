@@ -29,7 +29,11 @@ import Data.Time.Parse
 import Data.Accessor
 
 import Graphics.Rendering.Chart
+
+#ifdef HAVE_GTK
 import Graphics.Rendering.Chart.Gtk
+#endif
+
 import Graphics.Rendering.Chart.Grid
 import Graphics.Rendering.Chart.Plot
 import Graphics.Rendering.Chart.Event
@@ -63,7 +67,9 @@ data InEvent = InEdge  {evt_track :: S.ByteString, evt_edge :: Edge}
              deriving (Show)
 
 data OutFormat = PNG | PDF | PS | SVG
+#ifdef HAVE_GTK
                | Window
+#endif
 
 class HasDelta t where
   type Delta t :: *
@@ -176,7 +182,9 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
         outFile     = single "output file" "-o"  (error "No output file (-o) specified")
         outFormat   = maybe PNG id $ lookup (single "output format" "-of" (name2format outFile)) $
             [("png",PNG), ("pdf",PDF), ("ps",PS), ("svg",SVG)
+#ifdef HAVE_GTK            
             , ("x",Window)
+#endif            
             ]
           where
             name2format = reverse . takeWhile (/='.') . reverse
@@ -678,6 +686,7 @@ zoom events fromTime toTime = filter p events
 showHelp = mapM_ putStrLn [ "",
   "tplot - a tool for drawing timing diagrams.",
   "        See http://www.haskell.org/haskellwiki/Timeplot",
+#ifdef HAVE_GTK  
   "Usage: tplot [-o OFILE] [-of {png|pdf|ps|svg|x}] [-or 640x480]",
   "             -if IFILE [-tf TF] ",
   "             [{+|-}k Pat1 Kind1 {+|-}k Pat2 Kind2 ...] [{+|-}dk KindN]",
@@ -685,6 +694,14 @@ showHelp = mapM_ putStrLn [ "",
   "  -o  OFILE  - output file (required if -of is not x)",
   "  -of        - output format (x means draw result in a window, default:",
   "               extension of -o)",
+#else
+  "Usage: tplot [-o OFILE] [-of {png|pdf|ps|svg}] [-or 640x480]",
+  "             -if IFILE [-tf TF] ",
+  "             [{+|-}k Pat1 Kind1 {+|-}k Pat2 Kind2 ...] [{+|-}dk KindN]",
+  "             [-fromTime TIME] [-toTime TIME] [-baseTime TIME]",
+  "  -o  OFILE  - output file",
+  "  -of        - output format (default: extension of -o)",
+#endif
   "  -or        - output resolution (default 640x480)",
   "  -if IFILE  - input file; '-' means 'read from stdin'",
   "  -tf TF     - time format: 'num' means that times are floating-point",
@@ -806,7 +823,9 @@ mainWithArgs args = do
           PDF    -> renderableToPDFFile ;
           PS     -> renderableToPSFile  ;
           SVG    -> renderableToSVGFile ;
+#ifdef HAVE_GTK          
           Window -> \c w h f -> renderableToWindow c w h
+#endif          
         }
       case conf of
         ConcreteConf {
