@@ -127,8 +127,8 @@ data ChartKind t = KindEvent
                | KindBinHist   { binSize :: Delta t, delims    :: [Double] }
                | KindFreq      { binSize :: Delta t, style :: PlotBarsStyle }
                | KindHistogram { binSize :: Delta t, style :: PlotBarsStyle }
-               | KindLines
-               | KindDots
+               | KindLines     
+               | KindDots      { alpha :: Double }
                | KindCumSum    { subtrackStyle :: SumSubtrackStyle }
                | KindSum       { binSize :: Delta t, subtrackStyle :: SumSubtrackStyle }
                | KindNone
@@ -240,8 +240,9 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
                                              "(without spaces!) threshold values, e.g.: -dk 'binh 1 10,50,100,200,500'"
         parseKind ["lines"       ] = KindLines
         parseKind ("lines":_)      = error "lines requires no arguments"
-        parseKind ["dots"        ] = KindDots
-        parseKind ("dots":_)       = error "dots requires no arguments"
+        parseKind ["dots"        ] = KindDots { alpha = 1 }
+        parseKind ["dots",    a  ] = KindDots { alpha = read a }
+        parseKind ("dots":_)       = error "dots requires 0 or 1 arguments (the argument is alpha value: 0 = transparent, 1 = opaque, default 1)"
         parseKind ["cumsum"      ] = KindCumSum    {subtrackStyle=SumStacked}
         parseKind ["cumsum",  s  ] = KindCumSum    {subtrackStyle=parseSubtrackStyle s}
         parseKind ("cumsum":_)     = error $ "cumsum requires zero or one argument (subtrack style), e.g.: " ++ 
@@ -379,7 +380,7 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
       KindBinFreq   bs vs -> withAnyOrdinate $ plotTrackBinFreqs  name es vs bs
       KindBinHist   bs vs -> withAnyOrdinate $ plotTrackBinHist   name es vs bs
       KindLines           -> withAnyOrdinate $ plotTrackLines     name es
-      KindDots            -> withAnyOrdinate $ plotTrackDots      name es
+      KindDots      alpha -> withAnyOrdinate $ plotTrackDots      name es alpha
       KindSum       bs ss -> withAnyOrdinate $ plotTrackSum       name es bs ss
       KindCumSum    ss    -> withAnyOrdinate $ plotTrackCumSum    name es ss
       KindDuration  sk    -> plotWithKind       name sk (edges2durations (edges es) minInTime maxInTime name)
@@ -519,14 +520,14 @@ makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sS
     plotTrackLines :: S.ByteString -> [(LocalTime,InEvent)] -> Layout1 LocalTime Double
     plotTrackLines name es = plotLines name (groupByTrack (values es))
 
-    plotTrackDots :: S.ByteString -> [(LocalTime,InEvent)] -> Layout1 LocalTime Double
-    plotTrackDots  name es = layoutWithTitle (map toPlot plots) name (length vss > 1)
+    plotTrackDots :: S.ByteString -> [(LocalTime,InEvent)] -> Double -> Layout1 LocalTime Double
+    plotTrackDots  name es alpha = layoutWithTitle (map toPlot plots) name (length vss > 1)
       where plots = [plot_points_values ^= vs $
                      plot_points_style  ^= hollowCircles 4 1 color $
                      plot_points_title  ^= S.unpack subtrack $
                      defaultPlotPoints
                      | (subtrack, vs) <- vss
-                     | color <- map opaque colors]
+                     | color <- if alpha == 1 then map opaque colors else map (`withOpacity` alpha) colors]
             vss = groupByTrack (values es)
 
     plotTrackCumSum :: S.ByteString -> [(LocalTime,InEvent)] -> SumSubtrackStyle -> Layout1 LocalTime Double
@@ -821,6 +822,10 @@ showHelp = mapM_ putStrLn [ "",
   "     gives one plot per subtrack.",
   "  'dots'   - a simple dot plot of numeric values. When used in 'within', ",
   "     gives one plot per subtrack.",
+  "  'dots ALPHA' - a simple dot plot of numeric values. When used in 'within', ",
+  "     gives one plot per subtrack. All dots are drawn with opacity ALPHA,",
+  "     where 0 means transparent and 1 means opaque. Useful when you're suffering",
+  "     from overplotting (dots overlapping each other too much)",
   "  'cumsum [TYPE]' - a simple line plot of the sum of the numeric values.",
   "     When used in 'within', produce 1 subplot per subtrack. TYPE can be: ",
   "     'overlayed' -> just lay the subplots over one another.",
