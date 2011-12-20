@@ -1,6 +1,5 @@
 {-# LANGUAGE CPP #-}
 module Tools.TimePlot.Conf (
-    ZoomMode(..),
     ConcreteConf(..),
     Conf,
     readConf
@@ -17,8 +16,6 @@ import qualified Data.ByteString.Lazy.Char8 as B
 
 import Tools.TimePlot.Types
 
-data ZoomMode = ZoomInput | ZoomOutput
-
 data ConcreteConf t =
   ConcreteConf {
     inFile        :: !FilePath,
@@ -27,7 +24,6 @@ data ConcreteConf t =
 
     fromTime      :: !(Maybe t),
     toTime        :: !(Maybe t),
-    zoomMode      :: !ZoomMode,
     transformLabel :: !(t -> String -> String),
 
     outFile       :: !FilePath,
@@ -53,7 +49,7 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
     readConf' :: (B.ByteString -> Maybe (LocalTime, B.ByteString)) -> ConcreteConf LocalTime
     readConf' parseTime = ConcreteConf {inFile=inFile, outFile=outFile, outFormat=outFormat, outResolution=outRes,
                       chartKindF=chartKindF, parseTime=parseTime, fromTime=fromTime, toTime=toTime,
-                      transformLabel=transformLabel, zoomMode=zoomMode}
+                      transformLabel=transformLabel}
       where
         inFile      = single "input file"  "-if" (error "No input file (-if) specified")
         outFile     = single "output file" "-o"  (error "No output file (-o) specified")
@@ -86,10 +82,6 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
         fromTime    = fst `fmap` (parseTime . B.pack $ single "minimum time (inclusive)" "-fromTime" "")
         toTime      = fst `fmap` (parseTime . B.pack $ single "maximum time (exclusive)" "-toTime"   "")
         baseTime    = fst `fmap` (parseTime . B.pack $ single "base time"                "-baseTime" "")
-
-        zoomMode = case single "zoom mode (input/output)" "-zoomMode" "input" of
-          "input"  -> ZoomInput
-          "output" -> ZoomOutput
 
         transformLabel t s = case baseTime of
           Nothing -> s

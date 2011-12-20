@@ -26,45 +26,51 @@ import Tools.TimePlot.Source
 import Tools.TimePlot.Plots
 import Tools.TimePlot.Render
 
+-- TODO:
+-- Assume events are sorted.
+-- Pass 1:
+--  * Compute min/max times
+--  * Compute unique track names
+-- 
+-- Then map track names to plotters (track types).
+-- 
+-- Pass 2:
+--  * Generate plot data (one-pass multiplexed to tracks)
+-- 
+-- This source file talks about pass 2.
+
 makeChart :: (S.ByteString -> [ChartKind LocalTime]) -> 
-             [(LocalTime, InEvent)] ->
+             IO [(LocalTime, InEvent)] ->
              Maybe LocalTime -> Maybe LocalTime ->
-             ZoomMode -> 
              (LocalTime -> String -> String) -> 
-             Renderable ()
-makeChart chartKindF []      minT maxT zoomMode transformLabel = emptyRenderable
-makeChart chartKindF events0 minT maxT zoomMode transformLabel = renderLayout1sStacked $ 
-    map (dataToPlot commonTimeAxis) $ 
-    makePlots chartKindF events0 minInTime maxInTime zoomMode transformLabel
-  where
-    times             :: [LocalTime]
-    times             = sort $ [t | (t,_)<- events0]
+             IO (Renderable ())
+makeChart chartKindF readEvents minT maxT transformLabel = do
+  events <- readEvents
+  if null events
+    then return emptyRenderable
+    else do
+      -- Pass 1
+      let (minTime, maxTime) = foldl' (\(mi,ma) t -> (min t mi, max t ma)) (t0, t0) (map fst events) where t0 = fst (head events)
 
-    minInTime  = case (zoomMode, minT) of (ZoomInput,  Just t) -> t ; _ -> head times
-    maxInTime  = case (zoomMode, maxT) of (ZoomInput,  Just t) -> t ; _ -> last times
-
-    minOutTime = case (zoomMode, minT) of (ZoomOutput, Just t) -> t ; _ -> head times
-    maxOutTime = case (zoomMode, maxT) of (ZoomOutput, Just t) -> t ; _ -> last times
-
-    commonTimeAxis :: AxisData LocalTime
-    commonTimeAxis = transformLabels $ autoAxis axisTimes
-      where
-        axisTimes = case zoomMode of
-          ZoomInput  -> [minInTime, maxInTime]
-          ZoomOutput -> [minOutTime, maxOutTime]
-        transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
+      let minOutTime = case minT of Just t -> t ; Nothing -> minTime
+      let maxOutTime = case maxT of Just t -> t ; Nothing -> maxTime
+      let transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
+      let commonTimeAxis = transformLabels $ autoAxis [minOutTime, maxOutTime]
+      
+      -- Pass 2
+      events' <- readEvents
+      let plots = makePlots chartKindF events' minTime maxTime transformLabel 
+      
+      -- Render
+      return $ renderLayout1sStacked $ map (dataToPlot commonTimeAxis) plots
 
 makePlots :: (S.ByteString -> [ChartKind LocalTime]) -> 
              [(LocalTime, InEvent)] ->
              LocalTime -> LocalTime ->
-             ZoomMode -> 
              (LocalTime -> String -> String) -> 
              [PlotData]
-makePlots chartKindF events0 minInTime maxInTime zoomMode transformLabel = plots
+makePlots chartKindF events minInTime maxInTime transformLabel = plots
   where
-    events :: [(LocalTime, InEvent)]
-    events = sortBy (comparing (\(t,_)-> t)) events0
-
     track2events :: M.Map S.ByteString [(LocalTime, InEvent)]
     track2events = reverse `fmap` foldl' insert M.empty [(evt_track e, x) | x@(t, e) <- events]
       where insert m (s, r) = M.alter (Just . maybe [r] (r:)) s m
@@ -87,12 +93,6 @@ makePlots chartKindF events0 minInTime maxInTime zoomMode transformLabel = plots
         mergeOn f (x:xs) (y:ys)
           | f x <= f y = x : mergeOn f xs (y:ys)
           | otherwise  = y : mergeOn f (x:xs) ys
-
-zoom :: (Ord t) => [(t, InEvent)] -> Maybe t -> Maybe t -> [(t, InEvent)]
-zoom events fromTime toTime = filter p events
-  where
-    p (t, _) = (maybe True (\ft -> t >= ft) fromTime) &&
-               (maybe True (\tt -> t <  tt) toTime)
 
 showHelp = mapM_ putStrLn [ "",
   "tplot - a tool for drawing timing diagrams.",
@@ -138,10 +138,6 @@ showHelp = mapM_ putStrLn [ "",
   "               (formatted according to -tf)",
   "  -baseTime  - display time difference with this value instead of absolute time",
   "               (formatted according to -tf)",
-  "  -zoomMode M- whether -fromTime and -toTime filter the input or the output:",
-  "               zooming input (dropping events outside interval) may be faster,",
-  "               but zooming output will be more accurate for history-dependent",
-  "               graphs like activity graphs. M is 'input' or 'output'.",
   "",
   "Input format: lines of the following form:",
   "1234 >A - at time 1234, activity A has begun",
@@ -243,12 +239,8 @@ mainWithArgs args = do
     ConcreteConf {
         parseTime=parseTime, inFile=inFile, chartKindF=chartKindF,
         outFile=outFile, outResolution=outResolution,
-        fromTime=fromTime, toTime=toTime, transformLabel=transformLabel, zoomMode=zoomMode} -> do
-      source <- readSource parseTime inFile
-      let source' = case zoomMode of {
-          ZoomInput  -> zoom source fromTime toTime ;
-          ZoomOutput -> source
-        }
-      let chart = makeChart chartKindF source' fromTime toTime zoomMode transformLabel
+        fromTime=fromTime, toTime=toTime, transformLabel=transformLabel } -> do
+      let source = readSource parseTime inFile
+      chart <- makeChart chartKindF source fromTime toTime transformLabel
       let (w,h) = outResolution
       render chart w h outFile
