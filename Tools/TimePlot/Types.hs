@@ -126,9 +126,3 @@ data PlotData = PlotBarsData
                     dotsColors :: [AlphaColour Double],
                     dotsTitles :: [String]
                 }
-
-ourPlotBars :: (BarsPlotValue a) => PlotBars LocalTime a
-ourPlotBars = plot_bars_spacing ^= BarsFixGap 0 0 $
-              plot_bars_style   ^= BarsStacked    $
-              plot_bars_alignment ^= BarsLeft     $
-              defaultPlotBars

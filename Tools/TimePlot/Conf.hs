@@ -1,5 +1,10 @@
 {-# LANGUAGE CPP #-}
-module Tools.TimePlot.Conf where
+module Tools.TimePlot.Conf (
+    ZoomMode(..),
+    ConcreteConf(..),
+    Conf,
+    readConf
+) where
 
 import Text.Regex.TDFA
 import Text.Regex.TDFA.ByteString

@@ -1,4 +1,6 @@
-module Tools.TimePlot.Source where
+module Tools.TimePlot.Source (
+    readSource
+) where
 
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy.Char8 as B

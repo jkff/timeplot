@@ -1,5 +1,7 @@
 {-# LANGUAGE ParallelListComp #-}
-module Tools.TimePlot.Render where
+module Tools.TimePlot.Render (
+    dataToPlot
+) where
 
 import Graphics.Rendering.Chart
 import Graphics.Rendering.Chart.Event
@@ -54,4 +56,8 @@ layoutWithTitle commonTimeAxis plots name showLegend =
     layout1_grid_last ^= True $
     defaultLayout1
 
-
+ourPlotBars :: (BarsPlotValue a) => PlotBars LocalTime a
+ourPlotBars = plot_bars_spacing ^= BarsFixGap 0 0 $
+              plot_bars_style   ^= BarsStacked    $
+              plot_bars_alignment ^= BarsLeft     $
+              defaultPlotBars

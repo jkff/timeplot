@@ -75,7 +75,7 @@ makePlots chartKindF events0 minInTime maxInTime zoomMode transformLabel = plots
                        case kind of {KindNone -> False ; KindWithin _ _ -> False ; _ -> True} ] ++
                      withinPlots
 
-    withinPlots  = [ plotWithKind (S.unpack name) k es minInTime maxInTime | (name, (k,es)) <- M.toList withinTracks ]
+    withinPlots  = [ plotTrack (S.unpack name) k es minInTime maxInTime | (name, (k,es)) <- M.toList withinTracks ]
       where
         withinTracks = M.fromListWith (\(ka,as) (kb,bs) -> (ka,mergeOn fst as bs)) components
         components = [ (mn k, (sk, es))
@@ -87,29 +87,6 @@ makePlots chartKindF events0 minInTime maxInTime zoomMode transformLabel = plots
         mergeOn f (x:xs) (y:ys)
           | f x <= f y = x : mergeOn f xs (y:ys)
           | otherwise  = y : mergeOn f (x:xs) ys
-
-plotTrack :: String -> ChartKind LocalTime -> [(LocalTime, InEvent)] -> LocalTime -> LocalTime -> PlotData
-plotTrack name kind es minInTime maxInTime = plotWithKind name kind es minInTime maxInTime
-
-plotWithKind :: String -> ChartKind LocalTime -> [(LocalTime, InEvent)] -> LocalTime -> LocalTime -> PlotData
-plotWithKind name k es minInTime maxInTime = case k of
-  KindACount    bs    -> plotTrackACount    name es minInTime maxInTime bs
-  KindAPercent  bs b  -> plotTrackAPercent  name es minInTime maxInTime bs b
-  KindAFreq     bs    -> plotTrackAFreq     name es minInTime maxInTime bs
-  KindFreq      bs k  -> plotTrackFreq      name es minInTime bs k
-  KindHistogram bs k  -> plotTrackHist      name es minInTime bs k
-  KindEvent           -> plotTrackEvent     name es minInTime maxInTime 
-  KindQuantile  bs qs -> plotTrackQuantile  name es minInTime qs bs
-  KindBinFreq   bs vs -> plotTrackBinFreqs  name es minInTime vs bs
-  KindBinHist   bs vs -> plotTrackBinHist   name es minInTime vs bs
-  KindLines           -> plotTrackLines     name es
-  KindDots      alpha -> plotTrackDots      name es alpha
-  KindSum       bs ss -> plotTrackSum       name es minInTime bs ss
-  KindCumSum    ss    -> plotTrackCumSum    name es minInTime ss
-  KindDuration  sk    -> plotWithKind       name sk (edges2durations (edges es) minInTime maxInTime name) minInTime maxInTime
-  KindWithin    _ _   -> error $ "KindDuration should not be plotted: track " ++ show name
-  KindNone            -> error $ "KindNone should not be plotted: track " ++ show name
-  KindUnspecified     -> error $ "Kind not specified for track " ++ show name ++ " (have you misspelled -dk or any of -k arguments?)"
 
 zoom :: (Ord t) => [(t, InEvent)] -> Maybe t -> Maybe t -> [(t, InEvent)]
 zoom events fromTime toTime = filter p events

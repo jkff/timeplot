@@ -1,5 +1,20 @@
 {-# LANGUAGE ParallelListComp, ScopedTypeVariables #-}
-module Tools.TimePlot.Plots where
+module Tools.TimePlot.Plots (
+    plotTrack,
+    plotTrackACount,
+    plotTrackAFreq,
+    plotTrackAPercent,
+    plotTrackFreq,
+    plotTrackHist,
+    plotTrackEvent,
+    plotTrackQuantile,
+    plotTrackBinFreqs,
+    plotTrackBinHist,
+    plotTrackLines,
+    plotTrackDots,
+    plotTrackSum,
+    plotTrackCumSum
+) where
 
 import Control.Monad
 import qualified Control.Monad.Trans.State.Strict as St
@@ -22,6 +37,27 @@ import Data.Colour
 import Data.Colour.Names
 
 import Tools.TimePlot.Types
+
+plotTrack :: String -> ChartKind LocalTime -> [(LocalTime, InEvent)] -> LocalTime -> LocalTime -> PlotData
+plotTrack name k es minInTime maxInTime = case k of
+  KindACount    bs    -> plotTrackACount    name es minInTime maxInTime bs
+  KindAPercent  bs b  -> plotTrackAPercent  name es minInTime maxInTime bs b
+  KindAFreq     bs    -> plotTrackAFreq     name es minInTime maxInTime bs
+  KindFreq      bs k  -> plotTrackFreq      name es minInTime bs k
+  KindHistogram bs k  -> plotTrackHist      name es minInTime bs k
+  KindEvent           -> plotTrackEvent     name es minInTime maxInTime 
+  KindQuantile  bs qs -> plotTrackQuantile  name es minInTime qs bs
+  KindBinFreq   bs vs -> plotTrackBinFreqs  name es minInTime vs bs
+  KindBinHist   bs vs -> plotTrackBinHist   name es minInTime vs bs
+  KindLines           -> plotTrackLines     name es
+  KindDots      alpha -> plotTrackDots      name es alpha
+  KindSum       bs ss -> plotTrackSum       name es minInTime bs ss
+  KindCumSum    ss    -> plotTrackCumSum    name es minInTime ss
+  KindDuration  sk    -> plotTrack          name sk (edges2durations (edges es) minInTime maxInTime name) minInTime maxInTime
+  KindWithin    _ _   -> error $ "KindDuration should not be plotted: track " ++ show name
+  KindNone            -> error $ "KindNone should not be plotted: track " ++ show name
+  KindUnspecified     -> error $ "Kind not specified for track " ++ show name ++ " (have you misspelled -dk or any of -k arguments?)"
+
 
 plotTrackActivity :: String -> [(LocalTime,InEvent)] -> LocalTime -> LocalTime -> 
                      NominalDiffTime -> ([(S.ByteString, Double)] -> Double -> Double) -> PlotData
