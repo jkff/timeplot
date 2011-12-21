@@ -13,7 +13,11 @@ module Tools.TimePlot.Plots (
     plotTrackLines,
     plotTrackDots,
     plotTrackSum,
-    plotTrackCumSum
+    plotTrackCumSum,
+
+    initGen,
+    genLines,
+    genDots
 ) where
 
 import Control.Monad
@@ -37,6 +41,9 @@ import Data.Colour
 import Data.Colour.Names
 
 import Tools.TimePlot.Types
+import Tools.TimePlot.Incremental
+
+type PlotGen = StreamSummary (LocalTime, InEvent) PlotData
 
 plotTrack :: String -> ChartKind LocalTime -> [(LocalTime, InEvent)] -> LocalTime -> LocalTime -> PlotData
 plotTrack name k es minInTime maxInTime = case k of
@@ -131,12 +138,7 @@ plotTrackQuantile  name es minInTime qs bs = PlotBarsData {
             percents = map (floor . (*100.0)) $ [0.0] ++ qs ++ [1.0]
         n = length qs
 
-plotTrackBinFreqs  name es minInTime vs bs = plotTrackBars vals (binTitles vs) name (binColor n)
-  where
-    vals = byTimeBins ((0:).values2binFreqs  vs) bs minInTime tvs
-    n    = length vs
-    -- TODO Multiple tracks
-    tvs  = [(t,v) | (t,_,v) <- values es]
+plotTrackBinFreqs  name es minInTime vs bs = runStreamSummary (genBinFreqs minInTime bs vs name) es
 plotTrackBinHist   name es minInTime vs bs = plotTrackBars vals (binTitles vs) name (binColor n)
   where
     vals = byTimeBins ((0:).values2binHist vs) bs minInTime tvs
@@ -155,16 +157,10 @@ plotTrackBars values titles name clr = PlotBarsData {
 none = (solidFillStyle transparent, Nothing)
 
 plotTrackLines :: String -> [(LocalTime,InEvent)] -> PlotData
-plotTrackLines name es = plotLines name (groupByTrack (values es))
+plotTrackLines name es = runStreamSummary (genLines name) es
 
 plotTrackDots :: String -> [(LocalTime,InEvent)] -> Double -> PlotData
-plotTrackDots  name es alpha = PlotDotsData {
-        plotName = name,
-        dotsData = [vs | (_,vs) <- vss],
-        dotsTitles = [S.unpack subtrack | (subtrack, _) <- vss],
-        dotsColors = if alpha == 1 then map opaque colors else map (`withOpacity` alpha) colors
-    }
-  where vss = groupByTrack (values es)
+plotTrackDots  name es alpha = runStreamSummary (genDots alpha name) es
 
 plotTrackCumSum :: String -> [(LocalTime,InEvent)] -> LocalTime -> SumSubtrackStyle -> PlotData
 plotTrackCumSum name es minInTime SumOverlayed = plotLines name rows
@@ -358,3 +354,48 @@ edges2events tes minTime maxTime = snd $ RWS.execRWS (mapM_ step tes >> flush) (
         n -> putTrack s (t0, max 0 (n-1), st)
 
     flush = RWS.get >>= mapM_ (\(s, (t0,_,st)) -> RWS.tell [(s, LongEvent (t0,True) (maxTime,False) st)]) . M.toList
+
+-----------------------------------------------------
+
+
+initGen KindLines = genLines
+initGen (KindDots alpha) = genDots alpha
+
+genValues (t,InValue s v) = Just (t,s,v)
+genValues _               = Nothing
+
+genLines :: String -> PlotGen
+genLines name = genFilterMap genValues $ listSummary (data2plot . groupByTrack)
+  where
+    data2plot vss = PlotLinesData {
+        plotName = name,
+        linesData = [vs | (_,vs) <- vss],
+        linesStyles = [solidLine 1 color | _ <- vss | color <- map opaque colors],
+        linesTitles = [S.unpack subtrack | (subtrack, _) <- vss]
+      }
+
+genDots :: Double -> String -> PlotGen
+genDots alpha name = genFilterMap genValues $ listSummary (data2plot . groupByTrack)
+  where
+    data2plot vss = PlotDotsData {
+        plotName = name,
+        dotsData = [vs | (_,vs) <- vss],
+        dotsTitles = [S.unpack subtrack | (subtrack, _) <- vss],
+        dotsColors = if alpha == 1 then map opaque colors else map (`withOpacity` alpha) colors
+      }
+
+genBinFreqs :: LocalTime -> NominalDiffTime -> [Double] -> String -> PlotGen
+genBinFreqs t0 binSize vs name = genFilterMap genValuesDropTrack $ summaryByTimeBins bins f
+  where
+    f :: StreamSummary (LocalTime,[Double]) PlotData
+    f = mapInputSummary (\(t,xs) -> (t, 0:values2binFreqs vs xs)) plotSummary
+
+    plotSummary :: StreamSummary (LocalTime,[Double]) PlotData
+    plotSummary = listSummary (\tfs -> plotTrackBars tfs (binTitles vs) name (binColor n))
+
+    bins = iterate (add binSize) t0
+    n    = length vs
+    -- TODO Multiple tracks
+    genValuesDropTrack (t, InValue s v) = Just (t,v)
+    genValuesDropTrack _                = Nothing
+

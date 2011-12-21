@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables, TypeFamilies, ParallelListComp, CPP #-}
+{-# LANGUAGE ScopedTypeVariables, TypeFamilies, ParallelListComp, CPP, BangPatterns #-}
 module Main where
 
 import Control.Monad
@@ -49,14 +49,24 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
   if null events
     then return emptyRenderable
     else do
-      -- Pass 1
-      let (minTime, maxTime) = foldl' (\(mi,ma) t -> (min t mi, max t ma)) (t0, t0) (map fst events) where t0 = fst (head events)
+      -- Pass 1: find out min/max time and final track names.
+      let i2o t KindNone                = []
+          i2o t (KindWithin mapName sk) = [(mapName t, sk)]
+          i2o t k                       = [(t, k)]
+      let i2oTracks t = concatMap (i2o t) (chartKindF t)
+      let t0 = fst (head events)
+      let (minTime, maxTime, outTracks) = foldl' 
+            (\(!mi,!ma,!ts) (t,e) -> (min t mi, max t ma, foldr (uncurry M.insert) ts (i2oTracks $ evt_track e))) 
+            (t0, t0, M.empty) 
+            events
 
       let minOutTime = case minT of Just t -> t ; Nothing -> minTime
       let maxOutTime = case maxT of Just t -> t ; Nothing -> maxTime
       let transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
       let commonTimeAxis = transformLabels $ autoAxis [minOutTime, maxOutTime]
       
+      let plotGens = [initGen kind (S.unpack track) | (track, kind) <- M.toList outTracks]
+
       -- Pass 2
       events' <- readEvents
       let plots = makePlots chartKindF events' minTime maxTime transformLabel 
