@@ -1,4 +1,4 @@
-{-# LANGUAGE ParallelListComp, ScopedTypeVariables #-}
+{-# LANGUAGE ParallelListComp, ScopedTypeVariables, BangPatterns #-}
 module Tools.TimePlot.Plots (
     plotTrack,
     plotTrackACount,
@@ -97,20 +97,13 @@ plotTrackFreq  = plotTrackAtoms atoms2freqs
 plotTrackHist  :: String -> [(LocalTime,InEvent)] -> LocalTime -> NominalDiffTime -> PlotBarsStyle -> PlotData
 plotTrackHist  = plotTrackAtoms atoms2hist
 
-plotTrackAtoms :: ([S.ByteString] -> [S.ByteString] -> [Double]) ->
-                  String -> [(LocalTime,InEvent)] -> LocalTime -> NominalDiffTime -> PlotBarsStyle -> PlotData
-plotTrackAtoms f name es minInTime bs k = PlotBarsData {
-        plotName = name,
-        barsStyle = k,
-        barsValues = vals,
-        barsStyles = itemStyles,
-        barsTitles = map show vs
-    }
-  where itemStyles = none:[(solidFillStyle (opaque c), Nothing) | c <- colors]
-        vals = byTimeBins ((0:).f vs) bs minInTime as
-        -- TODO Multiple tracks
-        as   = [(t,a) | (t,_,a) <- atoms es]
-        vs   = M.keys $ M.fromList $ [(a,()) | (_,a) <- as]
+atoms2hist :: (Ord a) => [a] -> M.Map a Int -> [Double]
+atoms2hist as m = [fromIntegral (M.findWithDefault 0 a m) | a <- as]
+
+atoms2freqs :: (Ord a) => [a] -> M.Map a Int -> [Double]
+atoms2freqs as m = [fromIntegral (M.findWithDefault 0 a m)/fromIntegral n | a <- as]
+  where
+    n = length as
 
 -- TODO Multiple tracks
 plotTrackEvent :: String -> [(LocalTime,InEvent)] -> LocalTime -> LocalTime -> PlotData
@@ -122,45 +115,23 @@ plotTrackEvent name es minInTime maxInTime = PlotEventData {
         toFillStyle s = solidFillStyle . opaque $ fromMaybe lightgray (readColourName (statusColor s))
         toLabel     s = statusLabel s
 
-plotTrackQuantile :: String -> [(LocalTime,InEvent)] -> LocalTime -> [Double] -> NominalDiffTime -> PlotData
-plotTrackQuantile  name es minInTime qs bs = PlotBarsData {
-        plotName = name,
-        barsStyle = BarsStacked,
-        barsValues = toBars (byTimeBins (getQuantiles qs) bs minInTime vs),
-        barsStyles = quantileStyles,
-        barsTitles = quantileTitles
-    }
-  where -- TODO Multiple tracks
-        vs = [(t,v) | (t,_,v) <- values es]
-        quantileStyles = none:(zip (map (solidFillStyle . opaque) colors) [Nothing | i <- [0..n+1]])
-        quantileTitles = [""]++[show p1++".."++show p2++"%" | (p1,p2) <- lag percents ]
-          where
-            percents = map (floor . (*100.0)) $ [0.0] ++ qs ++ [1.0]
-        n = length qs
+plotTrackQuantile  name es t0 vs bs = runStreamSummary (genQuantile bs vs name t0)        es
+plotTrackBinFreqs  name es t0 vs bs = runStreamSummary (genBinFreqs bs vs name t0)        es
+plotTrackBinHist   name es t0 vs bs = runStreamSummary (genBinHist  bs vs name t0)        es
+plotTrackLines     name es          = runStreamSummary (genLines          name undefined) es
+plotTrackDots      name es alpha    = runStreamSummary (genDots     alpha name undefined) es
+plotTrackAtoms   f name es t0 bs k  = runStreamSummary (genAtoms f  bs k  name t0)        es
+plotTrackSum       name es t0 bs ss = runStreamSummary (genSum      bs ss name t0)        es
 
-plotTrackBinFreqs  name es minInTime vs bs = runStreamSummary (genBinFreqs minInTime bs vs name) es
-plotTrackBinHist   name es minInTime vs bs = plotTrackBars vals (binTitles vs) name (binColor n)
-  where
-    vals = byTimeBins ((0:).values2binHist vs) bs minInTime tvs
-    tvs  = [(t,v) | (t,_,v) <- values es]
-    n    = length vs
-
-plotTrackBars :: [(LocalTime,[Double])] -> [String] -> String -> (Int -> AlphaColour Double) -> PlotData
-plotTrackBars values titles name clr = PlotBarsData {
+plotTrackBars :: [(LocalTime,[Double])] -> [String] -> String -> [Colour Double] -> PlotData
+plotTrackBars values titles name colors = PlotBarsData {
         plotName = name,
         barsStyle = BarsStacked,
         barsValues = values,
-        barsStyles = none:[(solidFillStyle (clr i), Nothing) | (i,_) <- [0..]`zip`titles],
+        barsStyles = [(solidFillStyle c, Nothing) | (i,_) <- [0..]`zip`titles | c <- transparent:map opaque colors],
         barsTitles = titles
     }
 
-none = (solidFillStyle transparent, Nothing)
-
-plotTrackLines :: String -> [(LocalTime,InEvent)] -> PlotData
-plotTrackLines name es = runStreamSummary (genLines name) es
-
-plotTrackDots :: String -> [(LocalTime,InEvent)] -> Double -> PlotData
-plotTrackDots  name es alpha = runStreamSummary (genDots alpha name) es
 
 plotTrackCumSum :: String -> [(LocalTime,InEvent)] -> LocalTime -> SumSubtrackStyle -> PlotData
 plotTrackCumSum name es minInTime SumOverlayed = plotLines name rows
@@ -181,30 +152,10 @@ plotTrackCumSum name es minInTime SumStacked = plotLines name rows
           let trackSums = map (\x -> M.findWithDefault 0 x st) allTracks
           return (t, allTracks `zip` (scanl1 (+) trackSums))
 
-plotTrackSum :: String -> [(LocalTime,InEvent)] -> LocalTime -> NominalDiffTime -> SumSubtrackStyle -> PlotData
-plotTrackSum name es minInTime bs ss = plotLines name rows
-  where groups    = groupByTrack (values es)
-        allTracks = M.keys $ M.fromList groups
-        
-        rowsT :: [(LocalTime, M.Map S.ByteString Double)]
-        rowsT = byTimeBins (M.fromListWith (+)) bs minInTime $ sort [(t, (track, v)) | (track, vs) <- groups, (t, v) <- vs]
-        
-        rowsT' = case ss of
-          SumOverlayed -> map (\(t,ss) -> (t, M.toList ss)) rowsT
-          SumStacked   -> map (\(t,ss) -> (t, stack ss))    rowsT
-
-        stack :: M.Map S.ByteString Double -> [(S.ByteString, Double)]
-        stack ss = zip allTracks (scanl1 (+) (map (\x -> M.findWithDefault 0 x ss) allTracks))
-        
-        rows :: [(S.ByteString, [(LocalTime, Double)])]
-        rows  = M.toList $ sort `fmap` M.fromListWith (++) [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
-
 edges  :: [(LocalTime,InEvent)] -> [(LocalTime,S.ByteString,Edge)]
 values :: [(LocalTime,InEvent)] -> [(LocalTime,S.ByteString,Double)]
-atoms  :: [(LocalTime,InEvent)] -> [(LocalTime,S.ByteString,S.ByteString)]
 edges  es = [(t,s,e) | (t,InEdge  s e) <- es]
 values es = [(t,s,v) | (t,InValue s v) <- es]
-atoms  es = [(t,s,a) | (t,InAtom  s a) <- es]
 
 lag :: [a] -> [(a,a)]
 lag xs = xs `zip` tail xs
@@ -216,9 +167,6 @@ binTitles vs = [low]++[show v1++".."++show v2 | (v1,v2) <- lag vs]++[high]
     low = "<"++show (head vs)
     high = ">"++show (last vs)
 
-binColor n i = opaque (colors !! i)
-
-toBars tvs = [(t,diffs vs) | (t,vs) <- tvs]
 diffs xs = zipWith (-) xs (0:xs)
 
 groupByTrack xs = M.toList $ sort `fmap` M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- xs]
@@ -296,31 +244,6 @@ getQuantiles qs = \xs -> quantiles' (sort xs)
           | i==i' = x:index (i':is) j     (x:xs)
           | True = x:index (i':is) (j+1) xs
 
-values2binFreqs :: (Ord a) => [a] -> [a] -> [Double]
-values2binFreqs bins xs = map toFreq $ values2binHist bins xs
-  where
-    n = length xs
-    toFreq = if n==0 then const 0 else (\k -> k/fromIntegral n)
-
-values2binHist bins xs = values2binHist' bins $ sort xs
-  where
-    values2binHist' []     xs = [fromIntegral (length xs)]
-    values2binHist' (a:as) xs = fromIntegral (length xs0) : values2binHist' as xs'
-      where (xs0,xs') = span (<a) xs
-
-atoms2hist :: (Ord a) => [a] -> [a] -> [Double]
-atoms2hist as xs = map (maybe 0 id . (`M.lookup` m)) as
-  where
-    m          = foldl' insert M.empty xs
-    insert m a = M.alter (Just . maybe 1 inc) a m
-    inc    n   = n `seq` (n+1)
-
-atoms2freqs :: (Ord a) => [a] -> [a] -> [Double]
-atoms2freqs as xs = map toFreq (atoms2hist as xs)
-  where
-    n = length xs
-    toFreq = if n==0 then const 0 else (\k -> k/fromIntegral n)
-
 edges2durations :: forall t . (Ord t, HasDelta t) => [(t,S.ByteString,Edge)] -> t -> t -> String -> [(t,InEvent)]
 edges2durations tes minTime maxTime commonTrack = 
     [(t2, InValue commonTrackBS $ toSeconds (t2 `sub` t1) (undefined::t)) 
@@ -358,14 +281,23 @@ edges2events tes minTime maxTime = snd $ RWS.execRWS (mapM_ step tes >> flush) (
 -----------------------------------------------------
 
 
-initGen KindLines = genLines
-initGen (KindDots alpha) = genDots alpha
+initGen KindLines            = genLines
+initGen (KindDots     alpha) = genDots alpha
+initGen (KindBinFreq  bs vs) = genBinFreqs bs vs
+initGen (KindBinHist  bs vs) = genBinHist  bs vs
+initGen (KindQuantile bs vs) = genQuantile bs vs
 
 genValues (t,InValue s v) = Just (t,s,v)
 genValues _               = Nothing
 
-genLines :: String -> PlotGen
-genLines name = genFilterMap genValues $ listSummary (data2plot . groupByTrack)
+valuesDropTrack (t, InValue s v) = Just (t,v)
+valuesDropTrack _                = Nothing
+
+atomsDropTrack (t, InAtom s a) = Just (t,a)
+atomsDropTrack _               = Nothing
+
+genLines :: String -> LocalTime -> PlotGen
+genLines name t0 = genFilterMap genValues $ listSummary (data2plot . groupByTrack)
   where
     data2plot vss = PlotLinesData {
         plotName = name,
@@ -374,8 +306,8 @@ genLines name = genFilterMap genValues $ listSummary (data2plot . groupByTrack)
         linesTitles = [S.unpack subtrack | (subtrack, _) <- vss]
       }
 
-genDots :: Double -> String -> PlotGen
-genDots alpha name = genFilterMap genValues $ listSummary (data2plot . groupByTrack)
+genDots :: Double -> String -> LocalTime -> PlotGen
+genDots alpha name t0 = genFilterMap genValues $ listSummary (data2plot . groupByTrack)
   where
     data2plot vss = PlotDotsData {
         plotName = name,
@@ -384,18 +316,92 @@ genDots alpha name = genFilterMap genValues $ listSummary (data2plot . groupByTr
         dotsColors = if alpha == 1 then map opaque colors else map (`withOpacity` alpha) colors
       }
 
-genBinFreqs :: LocalTime -> NominalDiffTime -> [Double] -> String -> PlotGen
-genBinFreqs t0 binSize vs name = genFilterMap genValuesDropTrack $ summaryByTimeBins bins f
+summaryByFixedTimeBins t0 binSize = summaryByTimeBins (iterate (add binSize) t0)
+
+genByBins :: ([Double] -> [Double] -> [Double]) -> NominalDiffTime -> [Double] -> String -> LocalTime -> PlotGen
+genByBins f binSize vs name t0 = genFilterMap valuesDropTrack $ 
+    summaryByFixedTimeBins t0 binSize $
+    mapInputSummary (\(t,xs) -> (t, 0:f vs xs)) $
+    listSummary (\tfs -> plotTrackBars tfs (binTitles vs) name colors)
+
+genBinHist :: NominalDiffTime -> [Double] -> String -> LocalTime -> PlotGen
+genBinHist = genByBins values2binHist
+
+genBinFreqs :: NominalDiffTime -> [Double] -> String -> LocalTime -> PlotGen
+genBinFreqs = genByBins values2binFreqs
+
+values2binFreqs :: (Ord a) => [a] -> [a] -> [Double]
+values2binFreqs bins xs = map toFreq $ values2binHist bins xs
   where
-    f :: StreamSummary (LocalTime,[Double]) PlotData
-    f = mapInputSummary (\(t,xs) -> (t, 0:values2binFreqs vs xs)) plotSummary
+    n = length xs
+    toFreq = if n==0 then const 0 else (\k -> k/fromIntegral n)
 
-    plotSummary :: StreamSummary (LocalTime,[Double]) PlotData
-    plotSummary = listSummary (\tfs -> plotTrackBars tfs (binTitles vs) name (binColor n))
+values2binHist bins xs = values2binHist' bins $ sort xs
+  where
+    values2binHist' []     xs = [fromIntegral (length xs)]
+    values2binHist' (a:as) xs = fromIntegral (length xs0) : values2binHist' as xs'
+      where (xs0,xs') = span (<a) xs
 
-    bins = iterate (add binSize) t0
-    n    = length vs
-    -- TODO Multiple tracks
-    genValuesDropTrack (t, InValue s v) = Just (t,v)
-    genValuesDropTrack _                = Nothing
+genQuantile :: NominalDiffTime -> [Double] -> String -> LocalTime -> PlotGen
+genQuantile binSize qs name t0 = genFilterMap valuesDropTrack $
+    summaryByFixedTimeBins t0 binSize $
+    mapInputSummary (\(t,xs) -> (t,diffs (getQuantiles qs xs))) $
+    listSummary (\tqs -> plotTrackBars tqs quantileTitles name colors)
+  where
+    quantileTitles = [""]++[show p1++".."++show p2++"%" | (p1,p2) <- lag percents ]
+    percents = map (floor . (*100.0)) $ [0.0] ++ qs ++ [1.0]
 
+genAtoms :: ([S.ByteString] -> M.Map S.ByteString Int -> [Double]) ->
+           NominalDiffTime -> PlotBarsStyle -> String -> LocalTime -> PlotGen
+genAtoms f binSize k name t0 = genFilterMap atomsDropTrack $
+    mapOutputSummary (uncurry h) (teeSummary uniqueAtoms fInBins)
+  where 
+    fInBins :: StreamSummary (LocalTime, S.ByteString) [(LocalTime, M.Map S.ByteString Int)]
+    fInBins = summaryByFixedTimeBins t0 binSize $
+              mapInputSummary (\(t,as) -> (t, counts as)) $
+              listSummary id
+    counts  = foldl' insert M.empty
+      where
+        insert m a = case M.lookup a m of
+          Nothing -> M.insert a 1     m
+          Just !n -> M.insert a (n+1) m
+
+    uniqueAtoms :: StreamSummary (LocalTime,S.ByteString) [S.ByteString]
+    uniqueAtoms = mapInputSummary (\(t,a) -> a) $ statefulSummary M.empty (\a -> M.insert a ()) M.keys
+
+    h :: [S.ByteString] -> [(LocalTime, M.Map S.ByteString Int)] -> PlotData
+    h as tfs = plotTrackBars (map (\(t,counts) -> (t,f as counts)) tfs) (map show as) name colors
+
+genSum :: NominalDiffTime -> SumSubtrackStyle -> String -> LocalTime -> PlotGen
+genSum binSize ss name t0 = genFilterMap genValues $
+    mapOutputSummary (uncurry h) (teeSummary uniqueSubtracks sumsInBins)
+  where 
+    sumsInBins :: StreamSummary (LocalTime,S.ByteString,Double) [(LocalTime, M.Map S.ByteString Double)]
+    sumsInBins = mapInputSummary (\(t,s,v) -> (t,(s,v))) $
+                 summaryByFixedTimeBins t0 binSize $
+                 mapInputSummary (\(t,tvs) -> (t, fromListWith' (+) tvs)) $
+                 listSummary id
+
+    uniqueSubtracks :: StreamSummary (LocalTime,S.ByteString,Double) [S.ByteString]
+    uniqueSubtracks = mapInputSummary (\(t,s,a) -> s) $ statefulSummary M.empty (\a -> M.insert a ()) M.keys
+
+    h :: [S.ByteString] -> [(LocalTime, M.Map S.ByteString Double)] -> PlotData
+    h tracks binSums = plotLines name rows
+      where
+        rowsT' = case ss of
+          SumOverlayed -> map (\(t,ss) -> (t, M.toList ss)) binSums
+          SumStacked   -> map (\(t,ss) -> (t, stack ss))    binSums
+
+        stack :: M.Map S.ByteString Double -> [(S.ByteString, Double)]
+        stack ss = zip tracks (scanl1 (+) (map (\x -> M.findWithDefault 0 x ss) tracks))
+        
+        rows :: [(S.ByteString, [(LocalTime, Double)])]
+        rows = M.toList $ fmap sort $ M.fromListWith (++) $
+          [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
+
+fromListWith' :: (Ord k) => (a -> a -> a) -> [(k,a)] -> M.Map k a
+fromListWith' f kvs = foldl' insert M.empty kvs
+  where
+    insert m (k,v) = case M.lookup k m of
+      Nothing  -> M.insert k v        m
+      Just !v' -> M.insert k (f v' v) m
