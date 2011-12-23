@@ -44,13 +44,15 @@ summaryByTimeBins ts s = statefulSummary init' insert' finalize'
       | True   = (t2:ts, [a], genInsert s (t1,reverse curBin))
     finalize' (t1:t2:ts, curBin, s) = genResult (genInsert s (t1,reverse curBin))
 
-summaryByKey :: (Ord k) => (k -> StreamSummary v r) -> StreamSummary (k,v) (M.Map k r)
+summaryByKey :: (Ord k) => (k -> StreamSummary v r) -> StreamSummary ([k],v) (M.Map k r)
 summaryByKey initByKey = statefulSummary init insert finalize
   where
     init = M.empty
-    insert (k,v) m = case M.lookup k m of
-      Nothing -> M.insert k (initByKey k) m
-      Just !s -> M.insert k (genInsert s v) m
+    insert (ks,v) m = foldl' f m ks
+      where
+        f m k = case M.lookup k m of
+          Nothing -> M.insert k (initByKey k) m
+          Just !s -> M.insert k (genInsert s v) m
     finalize = fmap genResult
 
 sumSummary = statefulSummary 0 (\a b -> a `seq` b `seq` (a+b)) id

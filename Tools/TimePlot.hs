@@ -25,6 +25,7 @@ import Tools.TimePlot.Conf
 import Tools.TimePlot.Source
 import Tools.TimePlot.Plots
 import Tools.TimePlot.Render
+import Tools.TimePlot.Incremental
 
 -- TODO:
 -- Assume events are sorted.
@@ -65,44 +66,13 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
       let transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
       let commonTimeAxis = transformLabels $ autoAxis [minOutTime, maxOutTime]
       
-      let plotGens = [initGen kind (S.unpack track) | (track, kind) <- M.toList outTracks]
-
       -- Pass 2
       events' <- readEvents
-      let plots = makePlots chartKindF events' minTime maxTime transformLabel 
+      let plots = runStreamSummary (summaryByKey (\track -> initGen (outTracks M.! track) (S.unpack track) minTime maxTime)) $
+                  map (\(t,e) -> (map fst $ i2oTracks (evt_track e), (t,e))) events
       
       -- Render
-      return $ renderLayout1sStacked $ map (dataToPlot commonTimeAxis) plots
-
-makePlots :: (S.ByteString -> [ChartKind LocalTime]) -> 
-             [(LocalTime, InEvent)] ->
-             LocalTime -> LocalTime ->
-             (LocalTime -> String -> String) -> 
-             [PlotData]
-makePlots chartKindF events minInTime maxInTime transformLabel = plots
-  where
-    track2events :: M.Map S.ByteString [(LocalTime, InEvent)]
-    track2events = reverse `fmap` foldl' insert M.empty [(evt_track e, x) | x@(t, e) <- events]
-      where insert m (s, r) = M.alter (Just . maybe [r] (r:)) s m
-
-    plots          = [ plotTrack (S.unpack track) kind es minInTime maxInTime 
-                     | (track, es) <- M.toList track2events,
-                       kind <- chartKindF track,
-                       case kind of {KindNone -> False ; KindWithin _ _ -> False ; _ -> True} ] ++
-                     withinPlots
-
-    withinPlots  = [ plotTrack (S.unpack name) k es minInTime maxInTime | (name, (k,es)) <- M.toList withinTracks ]
-      where
-        withinTracks = M.fromListWith (\(ka,as) (kb,bs) -> (ka,mergeOn fst as bs)) components
-        components = [ (mn k, (sk, es))
-                     | (k, es) <- M.toList track2events,
-                       kind <- chartKindF k,
-                       Just (sk,mn) <- [case kind of {KindWithin mn sk -> Just (sk,mn) ; _ -> Nothing}]]
-        mergeOn f [] ys = ys
-        mergeOn f xs [] = xs
-        mergeOn f (x:xs) (y:ys)
-          | f x <= f y = x : mergeOn f xs (y:ys)
-          | otherwise  = y : mergeOn f (x:xs) ys
+      return $ renderLayout1sStacked $ map (dataToPlot commonTimeAxis) (M.elems plots)
 
 showHelp = mapM_ putStrLn [ "",
   "tplot - a tool for drawing timing diagrams.",
