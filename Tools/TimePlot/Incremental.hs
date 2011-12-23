@@ -58,4 +58,4 @@ summaryByKey initByKey = statefulSummary init insert finalize
 sumSummary = statefulSummary 0 (\a b -> a `seq` b `seq` (a+b)) id
 
 teeSummary :: StreamSummary a r1 -> StreamSummary a r2 -> StreamSummary a (r1,r2)
-teeSummary s1 s2 = Summary (\a -> teeSummary (genInsert s1 a) (genInsert s2 a)) (genResult s1, genResult s2)
+teeSummary s1 s2 = Summary (\(!a) -> teeSummary (genInsert s1 a) (genInsert s2 a)) (genResult s1, genResult s2)
