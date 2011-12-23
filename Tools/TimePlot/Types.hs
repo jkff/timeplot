@@ -99,6 +99,8 @@ data ChartKind t = KindEvent
                | KindNone
                | KindUnspecified -- Causes an error message 
 
+instance Show CairoLineStyle where show _ = "<line>"
+instance Show CairoFillStyle where show _ = "<fill>"
 data PlotData = PlotBarsData
                 {
                     plotName :: String,
@@ -126,3 +128,4 @@ data PlotData = PlotBarsData
                     dotsColors :: [AlphaColour Double],
                     dotsTitles :: [String]
                 }
+              deriving (Show)

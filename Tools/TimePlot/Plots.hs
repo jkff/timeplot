@@ -229,7 +229,7 @@ genCumSum ss name t0 t1 = genFilterMap genValues $ listSummary (plotLines name .
         rowsT = (t0, zip allTracks (repeat 0)) : St.evalState (mapM addDataPoint es) M.empty
         
         addDataPoint (t, track, v) = do
-          St.modify (M.insertWith (+) track v)
+          St.modify (M.insertWith' (+) track v)
           st <- St.get
           let trackSums = map (\x -> M.findWithDefault 0 x st) allTracks
           return (t, allTracks `zip` (scanl1 (+) trackSums))
@@ -248,9 +248,9 @@ genActivity f bs name t0 t1 = genFilterMap genEdges $
 edges2binsSummary :: (Ord t,HasDelta t,Show t) => Delta t -> t -> t -> StreamSummary (t,S.ByteString,Edge) [((t,t), M.Map S.ByteString Double)]
 edges2binsSummary binSize tMin tMax = statefulSummary (M.empty, iterate (add binSize) tMin, []) step flush
   where
-    modState s t (!m, ts,r) f = {-# SCC "modState" #-} let !state' = f trackState in (M.insert s state' m, ts, r)
+    modState s t (!m, ts,r) f = {-# SCC "modState" #-} (m', ts, r)
       where
-        trackState = M.findWithDefault (0,t,0,0) s m
+        m' = M.insertWith' (\new !old -> f old) s (f (0,t,0,0)) m
 
     flushBin st@(m,t1:t2:ts,!r) = {-# SCC "flushBin" #-} (m', t2:ts, r')
       where
@@ -262,8 +262,8 @@ edges2binsSummary binSize tMin tMax = statefulSummary (M.empty, iterate (add bin
 
     step ev@(t, s, e) st@(m, t1:t2:ts, r)
       | t < t1  = error "Times are not in ascending order"
-      | t >= t2 = {-# SCC "step1" #-} step ev (flushBin st)
-      | True    = {-# SCC "step2" #-} step'' ev st
+      | t >= t2 = step ev (flushBin st)
+      | True    = step'' ev st
 
     step'' ev@(t,s,e) st@(m, t1:t2:ts, r) = if (t < t1 || t >= t2) then error "Outside bin" else step' ev st
     step' (t, s, SetTo _) st = st
@@ -331,7 +331,6 @@ genDuration sk name t0 t1 = genFilterMap genEdges $ edges2durationsSummary t0 t1
 
 -- UTILITIES
 
-fromListWith' :: (Ord k) => (a -> a -> a) -> [(k,a)] -> M.Map k a
 fromListWith' f kvs = foldl' insert M.empty kvs
   where
     insert m (k,v) = case M.lookup k m of
