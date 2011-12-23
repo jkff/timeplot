@@ -27,9 +27,9 @@ import Data.Monoid
 import Tools.TimePlot.Types
 import Tools.TimePlot.Incremental
 
-type PlotGen = String -> LocalTime -> LocalTime -> StreamSummary (LocalTime, InEvent) PlotData
+type PlotGen = String -> UTCTime -> UTCTime -> StreamSummary (UTCTime, InEvent) PlotData
 
-initGen :: ChartKind LocalTime -> PlotGen
+initGen :: ChartKind UTCTime -> PlotGen
 initGen (KindACount bs)         = genActivity (\sns n -> n) bs
 initGen (KindAPercent bs b)     = genActivity (\sns n -> 100*n/b) bs
 initGen (KindAFreq bs)          = genActivity (\sns n -> if n == 0 then 0 else (n / sum (M.elems sns))) bs
@@ -50,7 +50,7 @@ initGen (KindWithin _ _)        = \name -> error $ "KindDuration should not be p
 initGen KindNone                = \name -> error $ "KindNone should not be plotted: track " ++ show name
 initGen KindUnspecified         = \name -> error $ "Kind not specified for track " ++ show name ++ " (have you misspelled -dk or any of -k arguments?)"
 
-plotTrackBars :: [(LocalTime,[Double])] -> [String] -> String -> [Colour Double] -> PlotData
+plotTrackBars :: [(UTCTime,[Double])] -> [String] -> String -> [Colour Double] -> PlotData
 plotTrackBars values titles name colors = PlotBarsData {
         plotName = name,
         barsStyle = BarsStacked,
@@ -59,7 +59,7 @@ plotTrackBars values titles name colors = PlotBarsData {
         barsTitles = titles
     }
 
-plotLines :: String -> [(S.ByteString, [(LocalTime,Double)])] -> PlotData
+plotLines :: String -> [(S.ByteString, [(UTCTime,Double)])] -> PlotData
 plotLines name vss = PlotLinesData {
         plotName = name,
         linesData = [vs | (_, vs) <- vss],
@@ -170,7 +170,7 @@ genAtoms :: ([S.ByteString] -> M.Map S.ByteString Int -> [Double]) ->
 genAtoms f binSize k name t0 t1 = genFilterMap atomsDropTrack $
     mapOutputSummary (uncurry h) (teeSummary uniqueAtoms fInBins)
   where 
-    fInBins :: StreamSummary (LocalTime, S.ByteString) [(LocalTime, M.Map S.ByteString Int)]
+    fInBins :: StreamSummary (UTCTime, S.ByteString) [(UTCTime, M.Map S.ByteString Int)]
     fInBins = summaryByFixedTimeBins t0 binSize $
               mapInputSummary (\(t,as) -> (t, counts as)) $
               listSummary id
@@ -180,26 +180,26 @@ genAtoms f binSize k name t0 t1 = genFilterMap atomsDropTrack $
           Nothing -> M.insert a 1     m
           Just !n -> M.insert a (n+1) m
 
-    uniqueAtoms :: StreamSummary (LocalTime,S.ByteString) [S.ByteString]
+    uniqueAtoms :: StreamSummary (UTCTime,S.ByteString) [S.ByteString]
     uniqueAtoms = mapInputSummary (\(t,a) -> a) $ statefulSummary M.empty (\a -> M.insert a ()) M.keys
 
-    h :: [S.ByteString] -> [(LocalTime, M.Map S.ByteString Int)] -> PlotData
+    h :: [S.ByteString] -> [(UTCTime, M.Map S.ByteString Int)] -> PlotData
     h as tfs = plotTrackBars (map (\(t,counts) -> (t,f as counts)) tfs) (map show as) name colors
 
-uniqueSubtracks :: StreamSummary (LocalTime,S.ByteString,a) [S.ByteString]
+uniqueSubtracks :: StreamSummary (UTCTime,S.ByteString,a) [S.ByteString]
 uniqueSubtracks = mapInputSummary (\(t,s,a) -> s) $ statefulSummary M.empty (\a -> M.insert a ()) M.keys
 
 genSum :: NominalDiffTime -> SumSubtrackStyle -> PlotGen
 genSum binSize ss name t0 t1 = genFilterMap genValues $
     mapOutputSummary (uncurry h) (teeSummary uniqueSubtracks sumsInBins)
   where 
-    sumsInBins :: StreamSummary (LocalTime,S.ByteString,Double) [(LocalTime, M.Map S.ByteString Double)]
+    sumsInBins :: StreamSummary (UTCTime,S.ByteString,Double) [(UTCTime, M.Map S.ByteString Double)]
     sumsInBins = mapInputSummary (\(t,s,v) -> (t,(s,v))) $
                  summaryByFixedTimeBins t0 binSize $
                  mapInputSummary (\(t,tvs) -> (t, fromListWith' (+) tvs)) $
                  listSummary id
 
-    h :: [S.ByteString] -> [(LocalTime, M.Map S.ByteString Double)] -> PlotData
+    h :: [S.ByteString] -> [(UTCTime, M.Map S.ByteString Double)] -> PlotData
     h tracks binSums = plotLines name rows
       where
         rowsT' = case ss of
@@ -209,23 +209,23 @@ genSum binSize ss name t0 t1 = genFilterMap genValues $
         stack :: M.Map S.ByteString Double -> [(S.ByteString, Double)]
         stack ss = zip tracks (scanl1 (+) (map (\x -> M.findWithDefault 0 x ss) tracks))
         
-        rows :: [(S.ByteString, [(LocalTime, Double)])]
+        rows :: [(S.ByteString, [(UTCTime, Double)])]
         rows = M.toList $ fmap sort $ M.fromListWith (++) $
           [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
 
 genCumSum :: SumSubtrackStyle -> PlotGen
 genCumSum ss name t0 t1 = genFilterMap genValues $ listSummary (plotLines name . data2plot ss)
   where
-    data2plot :: SumSubtrackStyle -> [(LocalTime, S.ByteString, Double)] -> [(S.ByteString, [(LocalTime, Double)])]
+    data2plot :: SumSubtrackStyle -> [(UTCTime, S.ByteString, Double)] -> [(S.ByteString, [(UTCTime, Double)])]
     data2plot SumOverlayed es = [(s, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (t0, 0) vs) | (s, vs) <- groupByTrack es]
     data2plot SumStacked   es = rows
       where
         allTracks = Set.toList $ Set.fromList [track | (t, track, v) <- es]
 
-        rows :: [(S.ByteString, [(LocalTime, Double)])]
+        rows :: [(S.ByteString, [(UTCTime, Double)])]
         rows = groupByTrack [(t, track, v) | (t, tvs) <- rowsT, (track,v) <- tvs]
 
-        rowsT :: [(LocalTime, [(S.ByteString, Double)])]
+        rowsT :: [(UTCTime, [(S.ByteString, Double)])]
         rowsT = (t0, zip allTracks (repeat 0)) : St.evalState (mapM addDataPoint es) M.empty
         
         addDataPoint (t, track, v) = do
@@ -238,7 +238,7 @@ genActivity :: (M.Map S.ByteString Double -> Double -> Double) -> NominalDiffTim
 genActivity f bs name t0 t1 = genFilterMap genEdges $
     mapOutputSummary (uncurry h) (teeSummary uniqueSubtracks binAreas)
   where 
-    binAreas :: StreamSummary (LocalTime,S.ByteString,Edge) [(LocalTime, M.Map S.ByteString Double)]
+    binAreas :: StreamSummary (UTCTime,S.ByteString,Edge) [(UTCTime, M.Map S.ByteString Double)]
     binAreas = mapOutputSummary (map (\((t1,t2),m) -> (t1,m))) $ edges2binsSummary bs t0 t1
 
     h tracks binAreas = (plotTrackBars barsData ("":map S.unpack tracks) name colors) { barsStyle = BarsStacked }
@@ -326,7 +326,7 @@ genEventPlot name t0 t1 = genFilterMap genEdges $
                           edges2eventsSummary t0 t1
 -- TODO Multiple tracks
 
-genDuration :: ChartKind LocalTime -> PlotGen
+genDuration :: ChartKind UTCTime -> PlotGen
 genDuration sk name t0 t1 = genFilterMap genEdges $ edges2durationsSummary t0 t1 name (initGen sk name t0 t1)
 
 -- UTILITIES

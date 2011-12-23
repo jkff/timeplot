@@ -14,7 +14,25 @@ import Data.Maybe
 import Tools.TimePlot.Types
 import Tools.TimePlot.Plots
 
-dataToPlot :: AxisData LocalTime -> PlotData -> AnyLayout1 LocalTime
+instance PlotValue UTCTime where
+  toValue = toValue . utcToLocalTime utc
+  fromValue = localTimeToUTC utc . fromValue
+  autoAxis ts = ad' 
+    where 
+      ad :: AxisData LocalTime
+      ad = autoAxis (map (utcToLocalTime utc) ts)
+      ad' :: AxisData UTCTime
+      ad' = mapAxisData (utcToLocalTime utc) (localTimeToUTC utc) ad
+
+mapAxisData :: (a -> b) -> (b -> a) -> AxisData b -> AxisData a
+mapAxisData f f' (AxisData vp pv ticks labels grid) = AxisData 
+    (\range x -> vp range (f x)) 
+    (\range v -> f' (pv range v)) 
+    (map (\(x,t) -> (f' x, t)) ticks) 
+    (map (map (\(x,lab) -> (f' x, lab))) labels) 
+    (map f' grid)
+
+dataToPlot :: AxisData UTCTime -> PlotData -> AnyLayout1 UTCTime
 dataToPlot commonTimeAxis p@PlotBarsData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis [plotBars plot] (plotName p) (length (barsTitles p) > 1)
   where plot = plot_bars_values      ^= barsValues p $
                plot_bars_item_styles ^= barsStyles p $
@@ -44,7 +62,7 @@ dataToPlot commonTimeAxis p@PlotDotsData{} = withAnyOrdinate $ layoutWithTitle c
                  | color <- dotsColors p
                  | vs <- dotsData p]
 
-layoutWithTitle :: (PlotValue a) => AxisData LocalTime -> [Plot LocalTime a] -> String -> Bool -> Layout1 LocalTime a
+layoutWithTitle :: (PlotValue a) => AxisData UTCTime -> [Plot UTCTime a] -> String -> Bool -> Layout1 UTCTime a
 layoutWithTitle commonTimeAxis plots name showLegend =
     layout1_title ^= "" $
     layout1_plots ^= map Left plots $
@@ -56,7 +74,7 @@ layoutWithTitle commonTimeAxis plots name showLegend =
     layout1_grid_last ^= True $
     defaultLayout1
 
-ourPlotBars :: (BarsPlotValue a) => PlotBars LocalTime a
+ourPlotBars :: (BarsPlotValue a) => PlotBars UTCTime a
 ourPlotBars = plot_bars_spacing ^= BarsFixGap 0 0 $
               plot_bars_style   ^= BarsStacked    $
               plot_bars_alignment ^= BarsLeft     $

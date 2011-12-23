@@ -14,6 +14,8 @@ import Graphics.Rendering.Chart
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy.Char8 as B
 
+import Unsafe.Coerce
+
 import Tools.TimePlot.Types
 
 data ConcreteConf t =
@@ -31,22 +33,30 @@ data ConcreteConf t =
     outResolution :: !(Int,Int)
   }
 
-type Conf = ConcreteConf LocalTime
+type Conf = ConcreteConf UTCTime
 
 data KindChoiceOperator = Cut | Accumulate
 
 readConf :: [String] -> Conf
-readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%OS")) of
-    "date":f -> readConf' (strptime (B.pack $ unwords f))
-    _        -> error "Unrecognized time format (-tf)"
+readConf args = readConf' parseTime 
   where
+    pattern = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%OS")) of
+        "date":f -> B.pack (unwords f)
+        _        -> error "Unrecognized time format (-tf)"
+    parseTime = localToUTC . strptime pattern
+    localToUTC Nothing = Nothing
+    localToUTC (Just (t,s)) = Just (localToUTC' t, s)
+    localToUTC' (LocalTime day (TimeOfDay h m s)) = UTCTime day daytime
+      where
+        daytime = unsafeCoerce (s + fromIntegral (60*m) + fromIntegral (3600*h))
+
     int2double = fromIntegral :: Int -> Double
     single desc name def = case (getArg name 1 args) of
       [[r]] -> r
       []    -> def
       _     -> error $ "Single argument expected for: "++desc++" ("++name++")"
 
-    readConf' :: (B.ByteString -> Maybe (LocalTime, B.ByteString)) -> ConcreteConf LocalTime
+    readConf' :: (B.ByteString -> Maybe (UTCTime, B.ByteString)) -> ConcreteConf UTCTime
     readConf' parseTime = ConcreteConf {inFile=inFile, outFile=outFile, outFormat=outFormat, outResolution=outRes,
                       chartKindF=chartKindF, parseTime=parseTime, fromTime=fromTime, toTime=toTime,
                       transformLabel=transformLabel}
@@ -87,7 +97,7 @@ readConf args = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%
           Nothing -> s
           Just bt -> showDelta t bt
 
-        parseKind :: [String] -> ChartKind LocalTime
+        parseKind :: [String] -> ChartKind UTCTime
         parseKind ["acount",  n  ] = KindACount    {binSize=read n}
         parseKind ("acount":_)     = error "acount requires a single numeric argument, bin size, e.g.: -dk 'acount 1'"
         parseKind ["apercent",n,b] = KindAPercent  {binSize=read n,baseCount=read b}

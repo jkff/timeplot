@@ -40,10 +40,10 @@ import Tools.TimePlot.Incremental
 -- 
 -- This source file talks about pass 2.
 
-makeChart :: (S.ByteString -> [ChartKind LocalTime]) -> 
-             IO [(LocalTime, InEvent)] ->
-             Maybe LocalTime -> Maybe LocalTime ->
-             (LocalTime -> String -> String) -> 
+makeChart :: (S.ByteString -> [ChartKind UTCTime]) -> 
+             IO [(UTCTime, InEvent)] ->
+             Maybe UTCTime -> Maybe UTCTime ->
+             (UTCTime -> String -> String) -> 
              IO (Renderable ())
 makeChart chartKindF readEvents minT maxT transformLabel = do
   events <- readEvents

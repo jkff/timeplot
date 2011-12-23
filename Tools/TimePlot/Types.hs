@@ -55,10 +55,10 @@ instance HasDelta Double where
   fromSeconds d _ = d
   showDelta a b = show (a - b)
 
-instance HasDelta LocalTime where
-  type Delta LocalTime = NominalDiffTime
-  add d t = utcToLocalTime utc (addUTCTime d (localTimeToUTC utc t))
-  sub t2 t1 = diffUTCTime (localTimeToUTC utc t2) (localTimeToUTC utc t1)
+instance HasDelta UTCTime where
+  type Delta UTCTime = NominalDiffTime
+  add d t = addUTCTime d t
+  sub t2 t1 = diffUTCTime t2 t1
   toSeconds d _ = fromIntegral (truncate (1000000*d)) / 1000000
   fromSeconds d _ = fromRational (toRational d)
   showDelta t1 t2
@@ -77,7 +77,7 @@ instance HasDelta LocalTime where
           d = h `div` 24 :: Int
 
 instance Read NominalDiffTime where
-  readsPrec n s = [(fromSeconds i (undefined::LocalTime), s') | (i,s') <- readsPrec n s]
+  readsPrec n s = [(fromSeconds i (undefined::UTCTime), s') | (i,s') <- readsPrec n s]
 
 data SumSubtrackStyle = SumStacked | SumOverlayed
 
@@ -105,26 +105,26 @@ data PlotData = PlotBarsData
                 {
                     plotName :: String,
                     barsStyle :: PlotBarsStyle, 
-                    barsValues :: [ (LocalTime, [Double]) ], 
+                    barsValues :: [ (UTCTime, [Double]) ], 
                     barsStyles :: [(CairoFillStyle, Maybe CairoLineStyle)], 
                     barsTitles :: [String] 
                 }
               | PlotEventData
                 {
                     plotName :: String,
-                    eventData :: [Event LocalTime Status]
+                    eventData :: [Event UTCTime Status]
                 }
               | PlotLinesData
                 {
                     plotName :: String,
-                    linesData :: [[(LocalTime, Double)]],
+                    linesData :: [[(UTCTime, Double)]],
                     linesStyles :: [CairoLineStyle],
                     linesTitles :: [String]
                 }
               | PlotDotsData
                 {
                     plotName :: String,
-                    dotsData :: [[(LocalTime, Double)]],
+                    dotsData :: [[(UTCTime, Double)]],
                     dotsColors :: [AlphaColour Double],
                     dotsTitles :: [String]
                 }
