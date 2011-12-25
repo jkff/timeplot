@@ -8,7 +8,7 @@ import Data.ByteString.Lex.Lazy.Double
 import Tools.TimePlot.Types
 
 readSource :: (Show t) => (B.ByteString -> Maybe (t,B.ByteString)) -> FilePath -> IO [(t, InEvent)]
-readSource readTime f = (map parseLine . filter (not . B.null) . blines) `fmap` (if f=="-" then B.getContents else B.readFile f)
+readSource readTime f = (map parseLine . filter (not . B.null) . blines) `fmap` B.readFile f
   where
     blines   = map pruneLF . B.split '\n'
     pruneLF b | not (B.null b) && (B.last b == '\r') = B.init b

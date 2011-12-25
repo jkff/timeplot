@@ -2,60 +2,55 @@
 module Tools.TimePlot.Incremental where
 
 import Data.Time
-import Data.List
+import qualified Data.List as L
 import qualified Data.Map as M
 
 data StreamSummary a r where
-  Summary :: { genInsert :: a -> StreamSummary a r, genResult :: r } -> StreamSummary a r
+  Summary :: { insert :: a -> StreamSummary a r, finalize :: r } -> StreamSummary a r
 
 runStreamSummary :: StreamSummary a r -> [a] -> r
-runStreamSummary (Summary insert res) []     = res
-runStreamSummary (Summary insert res) (a:as) = runStreamSummary (insert a) as
+runStreamSummary !s []     = finalize s
+runStreamSummary !s (a:as) = runStreamSummary (insert s a) as
 
-statefulSummary :: s -> (a -> s -> s) -> (s -> r) -> StreamSummary a r
-statefulSummary init insert finalize = go init
+stateful :: s -> (a -> s -> s) -> (s -> r) -> StreamSummary a r
+stateful init insert finalize = go init
   where
     go !s = Summary (\a -> go (insert a s)) (finalize s)
 
-genFilterMap :: (a -> Maybe b) -> StreamSummary b r -> StreamSummary a r
-genFilterMap p s@(Summary insert res) = Summary insert' res
+filterMap :: (a -> Maybe b) -> StreamSummary b r -> StreamSummary a r
+filterMap p s@(Summary insert res) = Summary insert' res
   where 
-    insert' a = case p a of { Nothing -> genFilterMap p s ; Just b -> genFilterMap p (insert b) }
+    insert' a = case p a of { Nothing -> filterMap p s ; Just b -> filterMap p (insert b) }
 
-constSummary :: b -> StreamSummary a b
-constSummary b = Summary (\a -> constSummary b) b
+mapInput :: (a -> b) -> StreamSummary b r -> StreamSummary a r
+mapInput f (Summary insert res) = Summary (mapInput f . insert . f) res
 
-mapInputSummary :: (a -> b) -> StreamSummary b r -> StreamSummary a r
-mapInputSummary f (Summary insert res) = Summary (mapInputSummary f . insert . f) res
+mapOutput :: (r1 -> r2) -> StreamSummary a r1 -> StreamSummary a r2
+mapOutput f (Summary insert res) = Summary (mapOutput f . insert) (f res)
 
-mapOutputSummary :: (r1 -> r2) -> StreamSummary a r1 -> StreamSummary a r2
-mapOutputSummary f (Summary insert res) = Summary (mapOutputSummary f . insert) (f res)
+collect :: StreamSummary a [a]
+collect = stateful [] (:) reverse
 
-listSummary :: ([a] -> b) -> StreamSummary a b
-listSummary f = statefulSummary [] (:) (f . reverse)
-
-summaryByTimeBins :: (Ord t) => [t] -> StreamSummary (t,[a]) r -> StreamSummary (t,a) r
-summaryByTimeBins ts s = statefulSummary init' insert' finalize'
+byTimeBins :: (Ord t) => [t] -> StreamSummary (t,[a]) r -> StreamSummary (t,a) r
+byTimeBins ts s = stateful init' insert' finalize'
   where
     init' = (ts, [], s)
     insert' (t,a) (t1:t2:ts, curBin, !s) 
       | t < t1 = error "Times are not in ascending order"
       | t < t2 = (t1:t2:ts, a:curBin, s)
-      | True   = (t2:ts, [a], genInsert s (t1,reverse curBin))
-    finalize' (t1:t2:ts, curBin, s) = genResult (genInsert s (t1,reverse curBin))
+      | True   = (t2:ts, [a], insert s (t1,reverse curBin))
+    finalize' (t1:t2:ts, curBin, s) = finalize (insert s (t1,reverse curBin))
 
-summaryByKey :: (Ord k) => (k -> StreamSummary v r) -> StreamSummary ([k],v) (M.Map k r)
-summaryByKey initByKey = statefulSummary init insert finalize
+byKey :: (Ord k) => (k -> StreamSummary v r) -> StreamSummary ([k],v) (M.Map k r)
+byKey initByKey = stateful init' insert' finalize'
   where
-    init = M.empty
-    insert (ks,v) m = foldl' f m ks
+    init' = M.empty
+    insert' (ks,v) m = L.foldl' f m ks
       where
         f m k = case M.lookup k m of
           Nothing -> M.insert k (initByKey k) m
-          Just !s -> M.insert k (genInsert s v) m
-    finalize = fmap genResult
+          Just !s -> M.insert k (insert s v) m
+    finalize' = fmap finalize
 
-sumSummary = statefulSummary 0 (\a b -> a `seq` b `seq` (a+b)) id
-
-teeSummary :: StreamSummary a r1 -> StreamSummary a r2 -> StreamSummary a (r1,r2)
-teeSummary !s1 !s2 = Summary (\(!a) -> teeSummary (genInsert s1 a) (genInsert s2 a)) (genResult s1, genResult s2)
+tee :: StreamSummary a r1 -> StreamSummary a r2 -> StreamSummary a (r1,r2)
+tee !s1 !s2 = Summary (\(!a) -> tee (insert s1 a) (insert s2 a)) (finalize s1, finalize s2)

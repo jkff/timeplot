@@ -25,9 +25,8 @@ import Tools.TimePlot.Conf
 import Tools.TimePlot.Source
 import Tools.TimePlot.Plots
 import Tools.TimePlot.Render
-import Tools.TimePlot.Incremental
+import qualified Tools.TimePlot.Incremental as I
 
--- TODO:
 -- Assume events are sorted.
 -- Pass 1:
 --  * Compute min/max times
@@ -38,8 +37,6 @@ import Tools.TimePlot.Incremental
 -- Pass 2:
 --  * Generate plot data (one-pass multiplexed to tracks)
 -- 
--- This source file talks about pass 2.
-
 makeChart :: (S.ByteString -> [ChartKind UTCTime]) -> 
              IO [(UTCTime, InEvent)] ->
              Maybe UTCTime -> Maybe UTCTime ->
@@ -70,7 +67,7 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
       events' <- readEvents
       let eventsToTracks = map (\(t,e) -> (map fst $ i2oTracks (evt_track e), (t,e))) events'
 
-      let plots = runStreamSummary (summaryByKey (\track -> initGen (outTracks M.! track) (S.unpack track) minTime maxTime)) eventsToTracks
+      let plots = I.runStreamSummary (I.byKey (\track -> initGen (outTracks M.! track) (S.unpack track) minTime maxTime)) eventsToTracks
       
       -- Render
       return $ renderLayout1sStacked $ map (dataToPlot commonTimeAxis) (M.elems plots)
@@ -96,6 +93,10 @@ showHelp = mapM_ putStrLn [ "",
 #endif
   "  -or        - output resolution (default 640x480)",
   "  -if IFILE  - input file; '-' means 'read from stdin'",
+  "               NOTE: for large datasets, use actual files, not stdin,",
+  "               as tplot can operate on them in streaming mode, which",
+  "               allows it to use a lot less memory and work on virtually",
+  "               unbounded datasets",
   "  -tf TF     - time format: -tf 'date PATTERN' means that times are dates in the format",
   "               specified by PATTERN - see http://linux.die.net/man/3/strptime, ",
   "               for example, -tf 'date [%Y-%m-%d %H:%M:%S]' parses dates like ",
@@ -221,7 +222,12 @@ mainWithArgs args = do
         parseTime=parseTime, inFile=inFile, chartKindF=chartKindF,
         outFile=outFile, outResolution=outResolution,
         fromTime=fromTime, toTime=toTime, transformLabel=transformLabel } -> do
-      let source = readSource parseTime inFile
+      source <- case inFile of
+        "-" -> do
+          putStrLn "Warning: working in non-streaming mode (for very large datasets, supply input from a file)"
+          events <- readSource parseTime inFile
+          return (return events)
+        _ -> return (readSource parseTime inFile)
       chart <- makeChart chartKindF source fromTime toTime transformLabel
       let (w,h) = outResolution
       render chart w h outFile
