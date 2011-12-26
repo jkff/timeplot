@@ -65,9 +65,10 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
       
       -- Pass 2
       events' <- readEvents
-      let eventsToTracks = map (\(t,e) -> (map fst $ i2oTracks (evt_track e), (t,e))) events'
+      let eventsToTracks = [(outTrack, (t,e)) | (t,e) <- events', (outTrack,_) <- i2oTracks (evt_track e)]
 
-      let plots = I.runStreamSummary (I.byKey (\track -> initGen (outTracks M.! track) (S.unpack track) minTime maxTime)) eventsToTracks
+      let initPlot track = initGen (outTracks M.! track) (S.unpack track) minTime maxTime
+      let plots = I.runStreamSummary (I.byKey initPlot) eventsToTracks
       
       -- Render
       return $ renderLayout1sStacked $ map (dataToPlot commonTimeAxis) (M.elems plots)

@@ -5,6 +5,7 @@ module Tools.TimePlot.Plots (
 
 import qualified Control.Monad.Trans.State.Strict as St
 import Control.Arrow
+import Control.Applicative
 import Data.List (foldl', sort)
 import Data.Maybe
 import qualified Data.Map as M
@@ -90,7 +91,7 @@ edges _              = Nothing
 
 ------------------- Lines ----------------------
 genLines :: PlotGen
-genLines name t0 t1 = I.filterMap values $ I.mapOutput (data2plot . groupByTrack) I.collect
+genLines name t0 t1 = I.filterMap values $ (data2plot . groupByTrack) <$> I.collect
   where
     data2plot vss = PlotLinesData {
         plotName = name,
@@ -101,7 +102,7 @@ genLines name t0 t1 = I.filterMap values $ I.mapOutput (data2plot . groupByTrack
 
 ------------------- Dots ----------------------
 genDots :: Double -> PlotGen
-genDots alpha name t0 t1 = I.filterMap values $ I.mapOutput (data2plot . groupByTrack) I.collect
+genDots alpha name t0 t1 = I.filterMap values $ (data2plot . groupByTrack) <$> I.collect
   where
     data2plot vss = PlotDotsData {
         plotName = name,
@@ -118,7 +119,7 @@ genByBins :: ([Double] -> [Double] -> [Double]) -> NominalDiffTime -> [Double] -
 genByBins f timeBinSize valueBinBounds name t0 t1 = I.filterMap valuesDropTrack $ 
     summaryByFixedTimeBins t0 timeBinSize $
     I.mapInput (\(t,xs) -> (t, 0:f valueBinBounds xs)) $
-    I.mapOutput (\tfs -> plotTrackBars tfs binTitles name colors) $
+    (\tfs -> plotTrackBars tfs binTitles name colors) <$>
     I.collect
   where
     binTitles = [low]++[show v1++".."++show v2 
@@ -149,7 +150,7 @@ genQuantile :: NominalDiffTime -> [Double] -> PlotGen
 genQuantile binSize qs name t0 t1 = I.filterMap valuesDropTrack $
     summaryByFixedTimeBins t0 binSize $
     I.mapInput (second (diffs . getQuantiles qs)) $
-    I.mapOutput (\tqs -> plotTrackBars tqs quantileTitles name colors) $
+    fmap (\tqs -> plotTrackBars tqs quantileTitles name colors) $
     I.collect
   where
     quantileTitles = [""]++[show p1++".."++show p2++"%" | p1 <- percents | p2 <- tail percents]
@@ -180,13 +181,10 @@ getQuantiles qs = quantiles' . sort
 
 genAtoms :: ([S.ByteString] -> M.Map S.ByteString Int -> [Double]) ->
            NominalDiffTime -> PlotBarsStyle -> PlotGen
-genAtoms f binSize k name t0 t1 = I.filterMap atomsDropTrack $
-    I.mapOutput (uncurry h) (I.tee (unique (\(t,atom) -> atom)) fInBins)
+genAtoms f binSize k name t0 t1 = I.filterMap atomsDropTrack (h <$> unique (\(t,atom) -> atom) <*> fInBins)
   where 
     fInBins :: I.StreamSummary (UTCTime, S.ByteString) [(UTCTime, M.Map S.ByteString Int)]
-    fInBins = summaryByFixedTimeBins t0 binSize $
-              I.mapInput (\(t,as) -> (t, counts as)) $
-              I.collect
+    fInBins = summaryByFixedTimeBins t0 binSize $ I.mapInput (second counts) I.collect
     counts  = foldl' insert M.empty
       where
         insert m a = case M.lookup a m of
@@ -197,14 +195,13 @@ genAtoms f binSize k name t0 t1 = I.filterMap atomsDropTrack $
     h as tfs = plotTrackBars (map (second (f as)) tfs) (map show as) name colors
 
 unique :: (Ord a) => (x -> a) -> I.StreamSummary x [a]
-unique f = I.stateful M.empty (\a -> M.insert (f a) ()) M.keys
+unique f = M.keys <$> I.foldl' (\a -> M.insert (f a) ()) M.empty
 
 uniqueSubtracks :: I.StreamSummary (UTCTime,S.ByteString,a) [S.ByteString]
 uniqueSubtracks = unique (\(t,s,a) -> s)
 
 genSum :: NominalDiffTime -> SumSubtrackStyle -> PlotGen
-genSum binSize ss name t0 t1 = I.filterMap values $
-    I.mapOutput (uncurry h) (I.tee uniqueSubtracks sumsInBins)
+genSum binSize ss name t0 t1 = I.filterMap values (h <$> uniqueSubtracks <*> sumsInBins)
   where 
     sumsInBins :: I.StreamSummary (UTCTime,S.ByteString,Double) [(UTCTime, M.Map S.ByteString Double)]
     sumsInBins = I.mapInput (\(t,s,v) -> (t,(s,v))) $
@@ -227,7 +224,7 @@ genSum binSize ss name t0 t1 = I.filterMap values $
           [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
 
 genCumSum :: SumSubtrackStyle -> PlotGen
-genCumSum ss name t0 t1 = I.filterMap values $ I.mapOutput (plotLines name . data2plot ss) I.collect
+genCumSum ss name t0 t1 = I.filterMap values $ fmap (plotLines name . data2plot ss) I.collect
   where
     data2plot :: SumSubtrackStyle -> [(UTCTime, S.ByteString, Double)] -> [(S.ByteString, [(UTCTime, Double)])]
     data2plot SumOverlayed es = [(s, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (t0, 0) vs) | (s, vs) <- groupByTrack es]
@@ -248,11 +245,10 @@ genCumSum ss name t0 t1 = I.filterMap values $ I.mapOutput (plotLines name . dat
           return (t, allTracks `zip` (scanl1 (+) trackSums))
  
 genActivity :: (M.Map S.ByteString Double -> Double -> Double) -> NominalDiffTime -> PlotGen
-genActivity f bs name t0 t1 = I.filterMap edges $
-    I.mapOutput (uncurry h) (I.tee uniqueSubtracks binAreas)
+genActivity f bs name t0 t1 = I.filterMap edges (h <$> uniqueSubtracks <*> binAreas)
   where 
     binAreas :: I.StreamSummary (UTCTime,S.ByteString,Edge) [(UTCTime, M.Map S.ByteString Double)]
-    binAreas = I.mapOutput (map (\((t1,t2),m) -> (t1,m))) $ edges2binsSummary bs t0 t1
+    binAreas = fmap (map (\((t1,t2),m) -> (t1,m))) $ edges2binsSummary bs t0 t1
 
     h tracks binAreas = (plotTrackBars barsData ("":map S.unpack tracks) name colors) { barsStyle = BarsStacked }
       where
@@ -261,7 +257,7 @@ genActivity f bs name t0 t1 = I.filterMap edges $
 edges2binsSummary :: (Ord t,HasDelta t,Show t) => 
     Delta t -> t -> t -> 
     I.StreamSummary (t,S.ByteString,Edge) [((t,t), M.Map S.ByteString Double)]
-edges2binsSummary binSize tMin tMax = I.stateful (M.empty, iterate (add binSize) tMin, []) step flush
+edges2binsSummary binSize tMin tMax = fmap flush (I.foldl' step (M.empty, iterate (add binSize) tMin, []))
   where
     -- State: (m, ts, r) where:
     --  * m  = subtrack => state of current bin: 
@@ -275,9 +271,9 @@ edges2binsSummary binSize tMin tMax = I.stateful (M.empty, iterate (add binSize)
     flushBin st@(m,t1:t2:ts,!r) = (m', t2:ts, r')
       where
         states = M.toList m
-        binSizeSec = toSeconds (t2 `sub` t1) t1
+        binSizeSec = deltaToSeconds t2 t1
         binValue (area,start,nopen,npulse) = 
-          (fromIntegral npulse + area + toSeconds (t2 `sub` start) t2*nopen) / binSizeSec
+          (fromIntegral npulse + area + deltaToSeconds t2 start*nopen) / binSizeSec
         !r' = ((t1,t2), M.fromList [(s, binValue bin) | (s, bin) <- states]) : r
         !m' = fmap (\(_,_,nopen,_) -> (0,t2,nopen,0)) m
 
@@ -291,9 +287,9 @@ edges2binsSummary binSize tMin tMax = I.stateful (M.empty, iterate (add binSize)
     step' (t, s, Pulse _) st = modState s t st $ 
       \(!area, !start, !nopen, !npulse) -> (area,                                   t, nopen,   npulse+1)
     step' (t, s, Rise)    st = modState s t st $ 
-      \(!area, !start, !nopen, !npulse) -> (area+toSeconds (t `sub` start) t*nopen, t, nopen+1, npulse)
+      \(!area, !start, !nopen, !npulse) -> (area+deltaToSeconds t start*nopen, t, nopen+1, npulse)
     step' (t, s, Fall)    st = modState s t st $ 
-      \(!area, !start, !nopen, !npulse) -> (area+toSeconds (t `sub` start) t*nopen, t, nopen-1, npulse)
+      \(!area, !start, !nopen, !npulse) -> (area+deltaToSeconds t start*nopen, t, nopen-1, npulse)
     flush st@(m, t1:t2:ts, r) 
       | t2 <= tMax = flush (flushBin st)
       | True       = reverse r
@@ -302,7 +298,7 @@ type StreamTransformer a b = forall r . I.StreamSummary b r -> I.StreamSummary a
 
 edges2eventsSummary :: forall t . (Ord t) => 
     t -> t -> StreamTransformer (t,S.ByteString,Edge) (S.ByteString, Event t Status)
-edges2eventsSummary t0 t1 s = I.stateful (M.empty,s) step flush
+edges2eventsSummary t0 t1 s = flush <$> I.foldl' step (M.empty,s)
   where
     -- State: (m, sum) where
     --  * m = subtrack => (event start, level = rise-fall, status)
@@ -343,13 +339,13 @@ edges2durationsSummary :: forall t . (Ord t, HasDelta t) =>
 edges2durationsSummary t0 t1 commonTrack = edges2eventsSummary t0 t1 . I.filterMap genDurations
   where
     genDurations (track, e) = case e of
-      LongEvent (t1,True) (t2,True) _ -> Just (t2, InValue commonTrackBS $ toSeconds (t2 `sub` t1) (undefined :: t))
+      LongEvent (t1,True) (t2,True) _ -> Just (t2, InValue commonTrackBS $ deltaToSeconds t2 t1)
       _                               -> Nothing
     commonTrackBS = S.pack commonTrack
 
 genEvent :: PlotGen
 genEvent name t0 t1 = I.filterMap edges $ 
-                      I.mapOutput (\evs -> PlotEventData { plotName = name, eventData = map snd evs }) $ 
+                      fmap (\evs -> PlotEventData { plotName = name, eventData = map snd evs }) $ 
                       edges2eventsSummary t0 t1 I.collect
 -- TODO Multiple tracks
 

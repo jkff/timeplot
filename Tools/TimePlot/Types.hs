@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, TypeFamilies #-}
+{-# LANGUAGE CPP, TypeFamilies, BangPatterns #-}
 module Tools.TimePlot.Types where
 
 import Data.Time hiding (parseTime)
@@ -44,6 +44,7 @@ class HasDelta t where
   -- (since given just a Delta t, the compiler won't be able to
   -- figure out which 't' we're speaking of)
   toSeconds :: Delta t -> t -> Double
+  deltaToSeconds :: t -> t -> Double
   fromSeconds :: Double -> t -> Delta t
   showDelta :: t -> t -> String
 
@@ -52,6 +53,7 @@ instance HasDelta Double where
   add d t = t + d
   sub t2 t1 = t2 - t1
   toSeconds d _ = d
+  deltaToSeconds t2 t1 = t2 - t1
   fromSeconds d _ = d
   showDelta a b = show (a - b)
 
@@ -60,6 +62,7 @@ instance HasDelta UTCTime where
   add d t = addUTCTime d t
   sub t2 t1 = diffUTCTime t2 t1
   toSeconds d _ = fromIntegral (truncate (1000000*d)) / 1000000
+  deltaToSeconds t2 t1 = diffToSeconds t2 t1
   fromSeconds d _ = fromRational (toRational d)
   showDelta t1 t2
     | ts0 < 0.001 = "0"
@@ -75,6 +78,14 @@ instance HasDelta UTCTime where
           m = tm - 60 * th :: Int
           h = th - 24 * d :: Int
           d = h `div` 24 :: Int
+
+{-# INLINE diffToSeconds #-}
+diffToSeconds :: UTCTime -> UTCTime -> Double
+diffToSeconds !t2 !t1 = 86400.0 * fromIntegral dd + fromRational (toRational (tod2-tod1))*1000.0
+  where
+    (d1,d2,tod1,tod2) = (utctDay t1, utctDay t2, utctDayTime t1, utctDayTime t2)
+    dd = toModifiedJulianDay d2 - toModifiedJulianDay d1
+
 
 instance Read NominalDiffTime where
   readsPrec n s = [(fromSeconds i (undefined::UTCTime), s') | (i,s') <- readsPrec n s]
