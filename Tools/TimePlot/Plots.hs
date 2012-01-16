@@ -1,4 +1,4 @@
-{-# LANGUAGE ParallelListComp, ScopedTypeVariables, BangPatterns, Rank2Types #-}
+{-# LANGUAGE ParallelListComp, ScopedTypeVariables, BangPatterns, Rank2Types, TupleSections #-}
 module Tools.TimePlot.Plots (
     initGen
 ) where
@@ -42,7 +42,7 @@ initGen (KindBinHist  bs vs)    = genBinHist  bs vs
 initGen KindLines               = genLines
 initGen (KindDots     alpha)    = genDots alpha
 initGen (KindSum bs ss)         = genSum bs ss
-initGen (KindCumSum ss)         = genCumSum ss
+initGen (KindCumSum bs ss)      = genCumSum bs ss
 initGen (KindDuration sk)       = genDuration sk
 initGen (KindWithin _ _)        = \name -> error $ 
   "KindWithin should not be plotted (this is a bug): track " ++ show name
@@ -201,14 +201,8 @@ uniqueSubtracks :: I.StreamSummary (UTCTime,S.ByteString,a) [S.ByteString]
 uniqueSubtracks = unique (\(t,s,a) -> s)
 
 genSum :: NominalDiffTime -> SumSubtrackStyle -> PlotGen
-genSum binSize ss name t0 t1 = I.filterMap values (h <$> uniqueSubtracks <*> sumsInBins)
+genSum binSize ss name t0 t1 = I.filterMap values (h <$> uniqueSubtracks <*> sumsInBins t0 binSize)
   where 
-    sumsInBins :: I.StreamSummary (UTCTime,S.ByteString,Double) [(UTCTime, M.Map S.ByteString Double)]
-    sumsInBins = I.mapInput (\(t,s,v) -> (t,(s,v))) $
-                 summaryByFixedTimeBins t0 binSize $
-                 I.mapInput (second (fromListWith' (+))) $
-                 I.collect
-
     h :: [S.ByteString] -> [(UTCTime, M.Map S.ByteString Double)] -> PlotData
     h tracks binSums = plotLines name rows
       where
@@ -223,27 +217,32 @@ genSum binSize ss name t0 t1 = I.filterMap values (h <$> uniqueSubtracks <*> sum
         rows = M.toList $ fmap sort $ M.fromListWith (++) $
           [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
 
-genCumSum :: SumSubtrackStyle -> PlotGen
-genCumSum ss name t0 t1 = I.filterMap values $ fmap (plotLines name . data2plot ss) I.collect
+sumsInBins :: UTCTime -> NominalDiffTime -> I.StreamSummary (UTCTime,S.ByteString,Double) [(UTCTime, M.Map S.ByteString Double)]
+sumsInBins t0 bs = I.mapInput (\(t,s,v) -> (t,(s,v))) $
+                   summaryByFixedTimeBins t0 bs $
+                   I.mapInput (second (fromListWith' (+))) $
+                   I.collect
+
+genCumSum :: NominalDiffTime -> SumSubtrackStyle -> PlotGen
+genCumSum bs ss name t0 t1 = I.filterMap values (accumulate <$> uniqueSubtracks <*> sumsInBins t0 bs)
   where
-    data2plot :: SumSubtrackStyle -> [(UTCTime, S.ByteString, Double)] -> [(S.ByteString, [(UTCTime, Double)])]
-    data2plot SumOverlayed es = [(s, scanl (\(t1,s) (t2,v) -> (t2,s+v)) (t0, 0) vs) | (s, vs) <- groupByTrack es]
-    data2plot SumStacked   es = rows
-      where
-        allTracks = Set.toList $ Set.fromList [track | (t, track, v) <- es]
+    accumulate :: [S.ByteString] -> [(UTCTime, M.Map S.ByteString Double)] -> PlotData
+    accumulate tracks tss = plotLines name [(track, [(t, ss M.! track) | (t,ss) <- cumsums]) | track <- tracks]
+      where 
+        cumsums = scanl1' f tss
 
-        rows :: [(S.ByteString, [(UTCTime, Double)])]
-        rows = groupByTrack [(t, track, v) | (t, tvs) <- rowsT, (track,v) <- tvs]
+        f (_,bases) (t,binSums) = (t,) $ M.fromList $ zip tracks $ zipWith (+) trackBases $ case ss of 
+            SumOverlayed -> trackSums
+            SumStacked   -> trackAccSums
+          where
+            trackSums    = [ M.findWithDefault 0 track binSums | track <- tracks ]
+            trackBases   = [ M.findWithDefault 0 track bases   | track <- tracks ]
+            trackAccSums = scanl1' (+) trackSums
 
-        rowsT :: [(UTCTime, [(S.ByteString, Double)])]
-        rowsT = (t0, zip allTracks (repeat 0)) : St.evalState (mapM addDataPoint es) M.empty
-        
-        addDataPoint (t, track, v) = do
-          St.modify (M.insertWith' (+) track v)
-          st <- St.get
-          let trackSums = map (\x -> M.findWithDefault 0 x st) allTracks
-          return (t, allTracks `zip` (scanl1 (+) trackSums))
- 
+scanl1' f (x:xs) = scanl' f x xs
+scanl' f !x0 [] = [x0]
+scanl' f !x0 (x:xs) = x0:scanl' f (f x0 x) xs
+
 genActivity :: (M.Map S.ByteString Double -> Double -> Double) -> NominalDiffTime -> PlotGen
 genActivity f bs name t0 t1 = I.filterMap edges (h <$> uniqueSubtracks <*> binAreas)
   where 

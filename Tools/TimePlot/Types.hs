@@ -105,7 +105,7 @@ data ChartKind t = KindEvent
                | KindHistogram { binSize :: Delta t, style :: PlotBarsStyle }
                | KindLines     
                | KindDots      { alpha :: Double }
-               | KindCumSum    { subtrackStyle :: SumSubtrackStyle }
+               | KindCumSum    { binSize :: Delta t, subtrackStyle :: SumSubtrackStyle }
                | KindSum       { binSize :: Delta t, subtrackStyle :: SumSubtrackStyle }
                | KindNone
                | KindUnspecified -- Causes an error message 
