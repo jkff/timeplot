@@ -229,16 +229,16 @@ genCumSum bs ss name t0 t1 = I.filterMap values (accumulate <$> uniqueSubtracks 
     accumulate :: [S.ByteString] -> [(UTCTime, M.Map S.ByteString Double)] -> PlotData
     accumulate tracks tss = plotLines name [(track, [(t, ss M.! track) | (t,ss) <- cumsums]) | track <- tracks]
       where 
-        cumsums = scanl1' f tss
+        cumsums = scanl' f (t0, M.fromList $ zip tracks (repeat 0)) (map normalize tss)
+        normalize (t,binSums) = (t, M.fromList [ (track, M.findWithDefault 0 track binSums) | track <- tracks ])
 
         f (_,bases) (t,binSums) = (t,) $ M.fromList $ zip tracks $ zipWith (+) trackBases $ case ss of 
             SumOverlayed -> trackSums
             SumStacked   -> trackAccSums
           where
-            trackSums    = [ M.findWithDefault 0 track binSums | track <- tracks ]
-            trackBases   = [ M.findWithDefault 0 track bases   | track <- tracks ]
+            trackSums    = [ binSums M.! track | track <- tracks ]
+            trackBases   = [ bases   M.! track | track <- tracks ]
             trackAccSums = scanl1' (+) trackSums
-
 scanl1' f (x:xs) = scanl' f x xs
 scanl' f !x0 [] = [x0]
 scanl' f !x0 (x:xs) = x0:scanl' f (f x0 x) xs
