@@ -1,5 +1,5 @@
 name: timeplot
-version: 1.0.1
+version: 1.0.3
 cabal-version: >=1.6
 build-type: Simple
 license: BSD3
@@ -29,8 +29,8 @@ executable tplot
     buildable: True
     ghc-options: -rtsopts
     other-modules: Graphics.Rendering.Chart.Event
-    build-depends: Chart >=0.14, base >=3 && <5, bytestring -any,
+    build-depends: Chart >=0.15, base >=3 && <5, bytestring -any,
                    bytestring-lexing -any, cairo -any, colour -any, containers -any,
                    data-accessor ==0.2.*, data-accessor-template >=0.2.1.1 && <0.3,
                    regex-tdfa -any, strptime >=0.1.7, time -any,
-                   transformers -any, hashmap -any, hashable -any
+                   transformers -any

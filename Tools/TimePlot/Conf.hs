@@ -37,18 +37,20 @@ type Conf = ConcreteConf UTCTime
 
 data KindChoiceOperator = Cut | Accumulate
 
+localToUTC Nothing = Nothing
+localToUTC (Just (t,s)) = Just (localToUTC' t, s)
+localToUTC' (LocalTime day (TimeOfDay h m s)) = {-# SCC "localToUTC" #-} UTCTime day daytime
+  where
+    daytime = unsafeCoerce (s + fromIntegral (60*m + 3600*h))
+
 readConf :: [String] -> Conf
 readConf args = readConf' parseTime 
   where
     pattern = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%OS")) of
         "date":f -> B.pack (unwords f)
         _        -> error "Unrecognized time format (-tf)"
-    parseTime = localToUTC . strptime pattern
-    localToUTC Nothing = Nothing
-    localToUTC (Just (t,s)) = Just (localToUTC' t, s)
-    localToUTC' (LocalTime day (TimeOfDay h m s)) = UTCTime day daytime
-      where
-        daytime = unsafeCoerce (s + fromIntegral (60*m) + fromIntegral (3600*h))
+    ourStrptime = {-# SCC "ourStrptime" #-} strptime pattern
+    parseTime s = localToUTC (ourStrptime s)
 
     int2double = fromIntegral :: Int -> Double
     single desc name def = case (getArg name 1 args) of
@@ -76,7 +78,7 @@ readConf args = readConf' parseTime
             parseRes s = case break (=='x') s of (h,_:v) -> (read h,read v)
         forceList :: [a] -> ()
         forceList = foldr seq ()
-        chartKindF  = forceList [forceList plusKinds, forceList minusKinds, forceList defaultKindsPlus, defaultKindMinus `seq` ()] `seq` kindByRegex $
+        chartKindF  = {-# SCC "chartKindF" #-} forceList [forceList plusKinds, forceList minusKinds, forceList defaultKindsPlus, defaultKindMinus `seq` ()] `seq` kindByRegex $
             [(Cut,        matches regex, parseKind (words kind)) | [regex,kind] <- getArg "-k" 2 args] ++
             [(Accumulate, matches regex, parseKind (words kind)) | [regex,kind] <- getArg "+k" 2 args]
           where
@@ -128,10 +130,10 @@ readConf args = readConf' parseTime
         parseKind ["dots"        ] = KindDots { alpha = 1 }
         parseKind ["dots",    a  ] = KindDots { alpha = read a }
         parseKind ("dots":_)       = error "dots requires 0 or 1 arguments (the argument is alpha value: 0 = transparent, 1 = opaque, default 1)"
-        parseKind ["cumsum"      ] = KindCumSum    {subtrackStyle=SumStacked}
-        parseKind ["cumsum",  s  ] = KindCumSum    {subtrackStyle=parseSubtrackStyle s}
-        parseKind ("cumsum":_)     = error $ "cumsum requires zero or one argument (subtrack style), e.g.: " ++ 
-                                             "-dk cumsum or -dk 'cumsum stacked'"
+        parseKind ["cumsum",  b  ] = KindCumSum    {binSize=read b, subtrackStyle=SumStacked}
+        parseKind ["cumsum",  b,s] = KindCumSum    {binSize=read b, subtrackStyle=parseSubtrackStyle s}
+        parseKind ("cumsum":_)     = error $ "cumsum requires 1 or 2 arguments (bin size and subtrack style), e.g.: " ++ 
+                                             "-dk 'cumsum 10' or -dk 'cumsum 10 stacked'"
         parseKind ["sum",     b  ] = KindSum       {binSize=read b, subtrackStyle=SumStacked}
         parseKind ["sum",     b,s] = KindSum       {binSize=read b, subtrackStyle=parseSubtrackStyle s}
         parseKind ("sum":_)        = error $ "sum requires one or two arguments: bin size and optionally " ++ 
