@@ -195,7 +195,7 @@ genAtoms f binSize k name t0 t1 = I.filterMap atomsDropTrack (h <$> unique (\(t,
     h as tfs = plotTrackBars (map (second (f as)) tfs) (map show as) name colors
 
 unique :: (Ord a) => (x -> a) -> I.StreamSummary x [a]
-unique f = M.keys <$> I.foldl' (\a -> M.insert (f a) ()) M.empty
+unique f = I.stateful M.empty (\a -> M.insert (f a) ()) M.keys
 
 uniqueSubtracks :: I.StreamSummary (UTCTime,S.ByteString,a) [S.ByteString]
 uniqueSubtracks = unique (\(t,s,a) -> s)
@@ -256,7 +256,7 @@ genActivity f bs name t0 t1 = I.filterMap edges (h <$> uniqueSubtracks <*> binAr
 edges2binsSummary :: (Ord t,HasDelta t,Show t) => 
     Delta t -> t -> t -> 
     I.StreamSummary (t,S.ByteString,Edge) [((t,t), M.Map S.ByteString Double)]
-edges2binsSummary binSize tMin tMax = fmap flush (I.foldl' step (M.empty, iterate (add binSize) tMin, []))
+edges2binsSummary binSize tMin tMax = I.stateful (M.empty, iterate (add binSize) tMin, []) step flush
   where
     -- State: (m, ts, r) where:
     --  * m  = subtrack => state of current bin: 
@@ -297,7 +297,7 @@ type StreamTransformer a b = forall r . I.StreamSummary b r -> I.StreamSummary a
 
 edges2eventsSummary :: forall t . (Ord t) => 
     t -> t -> StreamTransformer (t,S.ByteString,Edge) (S.ByteString, Event t Status)
-edges2eventsSummary t0 t1 s = flush <$> I.foldl' step (M.empty,s)
+edges2eventsSummary t0 t1 s = I.stateful (M.empty,s) step flush
   where
     -- State: (m, sum) where
     --  * m = subtrack => (event start, level = rise-fall, status)
