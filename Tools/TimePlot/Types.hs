@@ -57,12 +57,12 @@ instance HasDelta Double where
   fromSeconds d _ = d
   showDelta a b = show (a - b)
 
-instance HasDelta UTCTime where
-  type Delta UTCTime = NominalDiffTime
-  add d t = addUTCTime d t
-  sub t2 t1 = diffUTCTime t2 t1
+instance HasDelta LocalTime where
+  type Delta LocalTime = NominalDiffTime
+  add d t = utcToLocalTime utc (addUTCTime d (localTimeToUTC utc t))
+  sub t2 t1 = diffUTCTime (localTimeToUTC utc t2) (localTimeToUTC utc t1)
   toSeconds d _ = fromIntegral (truncate (1000000*d)) / 1000000
-  deltaToSeconds t2 t1 = diffToSeconds t2 t1
+  deltaToSeconds t2 t1 = diffLocalToSeconds t2 t1
   fromSeconds d _ = fromRational (toRational d)
   showDelta t1 t2
     | ts0 < 0.001 = "0"
@@ -79,16 +79,14 @@ instance HasDelta UTCTime where
           h = th - 24 * d :: Int
           d = h `div` 24 :: Int
 
-{-# INLINE diffToSeconds #-}
-diffToSeconds :: UTCTime -> UTCTime -> Double
-diffToSeconds !t2 !t1 = 86400.0 * fromIntegral dd + fromRational (toRational (tod2-tod1))*1000.0
+diffLocalToSeconds :: LocalTime -> LocalTime -> Double
+diffLocalToSeconds !t2 !t1 = 86400.0*fromIntegral (diffDays d2 d1) + fromIntegral (3600*(h2-h1) + 60*(m2-m1)) + fromRational (toRational (s2-s1))
   where
-    (d1,d2,tod1,tod2) = (utctDay t1, utctDay t2, utctDayTime t1, utctDayTime t2)
-    dd = toModifiedJulianDay d2 - toModifiedJulianDay d1
+    (d1,d2,TimeOfDay h1 m1 s1,TimeOfDay h2 m2 s2) = (localDay t1, localDay t2, localTimeOfDay t1, localTimeOfDay t2)
 
 
 instance Read NominalDiffTime where
-  readsPrec n s = [(fromSeconds i (undefined::UTCTime), s') | (i,s') <- readsPrec n s]
+  readsPrec n s = [(fromSeconds i (undefined::LocalTime), s') | (i,s') <- readsPrec n s]
 
 data SumSubtrackStyle = SumStacked | SumOverlayed
 
@@ -116,26 +114,26 @@ data PlotData = PlotBarsData
                 {
                     plotName :: String,
                     barsStyle :: PlotBarsStyle, 
-                    barsValues :: [ (UTCTime, [Double]) ], 
+                    barsValues :: [ (LocalTime, [Double]) ], 
                     barsStyles :: [(CairoFillStyle, Maybe CairoLineStyle)], 
                     barsTitles :: [String] 
                 }
               | PlotEventData
                 {
                     plotName :: String,
-                    eventData :: [Event UTCTime Status]
+                    eventData :: [Event LocalTime Status]
                 }
               | PlotLinesData
                 {
                     plotName :: String,
-                    linesData :: [[(UTCTime, Double)]],
+                    linesData :: [[(LocalTime, Double)]],
                     linesStyles :: [CairoLineStyle],
                     linesTitles :: [String]
                 }
               | PlotDotsData
                 {
                     plotName :: String,
-                    dotsData :: [[(UTCTime, Double)]],
+                    dotsData :: [[(LocalTime, Double)]],
                     dotsColors :: [AlphaColour Double],
                     dotsTitles :: [String]
                 }

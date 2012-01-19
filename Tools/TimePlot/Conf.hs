@@ -33,15 +33,9 @@ data ConcreteConf t =
     outResolution :: !(Int,Int)
   }
 
-type Conf = ConcreteConf UTCTime
+type Conf = ConcreteConf LocalTime
 
 data KindChoiceOperator = Cut | Accumulate
-
-localToUTC Nothing = Nothing
-localToUTC (Just (t,s)) = Just (localToUTC' t, s)
-localToUTC' (LocalTime day (TimeOfDay h m s)) = {-# SCC "localToUTC" #-} UTCTime day daytime
-  where
-    daytime = unsafeCoerce (s + fromIntegral (60*m + 3600*h))
 
 readConf :: [String] -> Conf
 readConf args = readConf' parseTime 
@@ -49,8 +43,9 @@ readConf args = readConf' parseTime
     pattern = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%OS")) of
         "date":f -> B.pack (unwords f)
         _        -> error "Unrecognized time format (-tf)"
-    ourStrptime = {-# SCC "ourStrptime" #-} strptime pattern
-    parseTime s = localToUTC (ourStrptime s)
+    {-# NOINLINE ourStrptime #-}
+    ourStrptime = strptime pattern
+    parseTime s = ourStrptime s
 
     int2double = fromIntegral :: Int -> Double
     single desc name def = case (getArg name 1 args) of
@@ -58,7 +53,7 @@ readConf args = readConf' parseTime
       []    -> def
       _     -> error $ "Single argument expected for: "++desc++" ("++name++")"
 
-    readConf' :: (B.ByteString -> Maybe (UTCTime, B.ByteString)) -> ConcreteConf UTCTime
+    readConf' :: (B.ByteString -> Maybe (LocalTime, B.ByteString)) -> ConcreteConf LocalTime
     readConf' parseTime = ConcreteConf {inFile=inFile, outFile=outFile, outFormat=outFormat, outResolution=outRes,
                       chartKindF=chartKindF, parseTime=parseTime, fromTime=fromTime, toTime=toTime,
                       transformLabel=transformLabel}
@@ -99,7 +94,7 @@ readConf args = readConf' parseTime
           Nothing -> s
           Just bt -> showDelta t bt
 
-        parseKind :: [String] -> ChartKind UTCTime
+        parseKind :: [String] -> ChartKind LocalTime
         parseKind ["acount",  n  ] = KindACount    {binSize=read n}
         parseKind ("acount":_)     = error "acount requires a single numeric argument, bin size, e.g.: -dk 'acount 1'"
         parseKind ["apercent",n,b] = KindAPercent  {binSize=read n,baseCount=read b}
