@@ -1,5 +1,10 @@
-{-# LANGUAGE ScopedTypeVariables, TypeFamilies, ParallelListComp, CPP, BangPatterns #-}
+{-# LANGUAGE ScopedTypeVariables, TypeFamilies, ParallelListComp, CPP, BangPatterns, TemplateHaskell #-}
 module Main where
+
+import Paths_timeplot (version)
+import Data.Version (showVersion)
+import Distribution.VcsRevision.Git
+import Language.Haskell.TH.Syntax
 
 import Control.Monad
 import Data.List
@@ -15,10 +20,6 @@ import Data.Time hiding (parseTime)
 import Data.Accessor
 
 import Graphics.Rendering.Chart
-
-#ifdef HAVE_GTK
-import Graphics.Rendering.Chart.Gtk
-#endif
 
 import Tools.TimePlot.Types
 import Tools.TimePlot.Conf
@@ -76,22 +77,12 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
 showHelp = mapM_ putStrLn [ "",
   "tplot - a tool for drawing timing diagrams.",
   "        See http://www.haskell.org/haskellwiki/Timeplot",
-#ifdef HAVE_GTK  
-  "Usage: tplot [-o OFILE] [-of {png|pdf|ps|svg|x}] [-or 640x480]",
-  "             -if IFILE [-tf TF] ",
-  "             [{+|-}k Pat1 Kind1 {+|-}k Pat2 Kind2 ...] [{+|-}dk KindN]",
-  "             [-fromTime TIME] [-toTime TIME] [-baseTime TIME]",
-  "  -o  OFILE  - output file (required if -of is not x)",
-  "  -of        - output format (x means draw result in a window, default:",
-  "               extension of -o)",
-#else
   "Usage: tplot [-o OFILE] [-of {png|pdf|ps|svg}] [-or 640x480]",
   "             -if IFILE [-tf TF] ",
   "             [{+|-}k Pat1 Kind1 {+|-}k Pat2 Kind2 ...] [{+|-}dk KindN]",
   "             [-fromTime TIME] [-toTime TIME] [-baseTime TIME]",
   "  -o  OFILE  - output file",
   "  -of        - output format (default: extension of -o)",
-#endif
   "  -or        - output resolution (default 640x480)",
   "  -if IFILE  - input file; '-' means 'read from stdin'",
   "               NOTE: for large datasets, use actual files, not stdin,",
@@ -203,21 +194,26 @@ showHelp = mapM_ putStrLn [ "",
   "     way as in cumsum."
   ]
 
+showGitVersion = $(do
+  v <- qRunIO getRevision
+  lift $ case v of
+    Nothing           -> "<none>"
+    Just (hash,True)  -> hash ++ " (with local modifications)"
+    Just (hash,False) -> hash)
 
 main = do
   args <- getArgs
   mainWithArgs args
 mainWithArgs args = do
   when (null args || args == ["--help"]) $ showHelp >> exitSuccess
+  when (null args || args == ["--version"]) $ do
+    putStrLn ("This is timeplot-" ++ showVersion version ++ " (git " ++ showGitVersion ++ ")") >> exitSuccess
   let !conf = readConf args
   let render = case (outFormat conf) of {
       PNG    -> \c w h f -> const () `fmap` renderableToPNGFile c w h f;
       PDF    -> renderableToPDFFile ;
       PS     -> renderableToPSFile  ;
       SVG    -> renderableToSVGFile ;
-#ifdef HAVE_GTK          
-      Window -> \c w h f -> renderableToWindow c w h
-#endif          
     }
   case conf of
     ConcreteConf {
