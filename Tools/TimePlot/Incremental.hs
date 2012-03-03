@@ -52,6 +52,6 @@ byKey initByKey = stateful init' insert' finalize'
   where
     init' = M.empty
     insert' (k,v) m = case M.lookup k m of
-      Nothing -> M.insert k (initByKey k) m
+      Nothing -> M.insert k (insert (initByKey k) v) m
       Just !s -> M.insert k (insert s v) m
     finalize' = fmap finalize
