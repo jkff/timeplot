@@ -60,7 +60,7 @@ plotTrackBars vals titles name colors = PlotBarsData {
         barsValues = vals,
         barsStyles = [(solidFillStyle c, Nothing) 
                      |(i,_) <- [0..]`zip`titles 
-                     | c <- transparent:map opaque colors],
+                     | c <- map opaque colors],
         barsTitles = titles
     }
 
