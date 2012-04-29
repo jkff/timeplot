@@ -32,9 +32,9 @@ initGen (KindACount bs)         = genActivity (\sns n -> n) bs
 initGen (KindAPercent bs b)     = genActivity (\sns n -> 100*n/b) bs
 initGen (KindAFreq bs)          = genActivity (\sns n -> if n == 0 then 0 else (n / sum (M.elems sns))) bs
 initGen (KindFreq bs k)         = genAtoms atoms2freqs bs k
-  where  atoms2freqs as m = let n = length as in [fromIntegral (M.findWithDefault 0 a m)/fromIntegral n | a <- as]
+  where  atoms2freqs as m = let n = length as in 0:[fromIntegral (M.findWithDefault 0 a m)/fromIntegral n | a <- as]
 initGen (KindHistogram bs k)    = genAtoms atoms2hist bs k
-  where  atoms2hist as m = [fromIntegral (M.findWithDefault 0 a m) | a <- as]
+  where  atoms2hist as m = 0:[fromIntegral (M.findWithDefault 0 a m) | a <- as]
 initGen KindEvent               = genEvent
 initGen (KindQuantile bs vs)    = genQuantile bs vs
 initGen (KindBinFreq  bs vs)    = genBinFreqs bs vs
@@ -58,8 +58,7 @@ plotTrackBars vals titles name colors = PlotBarsData {
         plotName = name,
         barsStyle = BarsStacked,
         barsValues = vals,
-        barsStyles = [(solidFillStyle c, Nothing) 
-                     |(i,_) <- [0..]`zip`titles 
+        barsStyles = [ (solidFillStyle c, Nothing) 
                      | c <- transparent:map opaque colors],
         barsTitles = titles
     }
@@ -192,7 +191,7 @@ genAtoms f binSize k name t0 t1 = I.filterMap atomsDropTrack (h <$> unique (\(t,
           Just !n -> M.insert a (n+1) m
 
     h :: [S.ByteString] -> [(LocalTime, M.Map S.ByteString Int)] -> PlotData
-    h as tfs = plotTrackBars (map (second (f as)) tfs) (map show as) name colors
+    h as tfs = (plotTrackBars (map (second (f as)) tfs) (map show as) name colors) { barsStyle = k }
 
 unique :: (Ord a) => (x -> a) -> I.StreamSummary x [a]
 unique f = I.stateful M.empty (\a -> M.insert (f a) ()) M.keys
