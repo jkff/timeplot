@@ -26,6 +26,7 @@ dataToPlot :: AxisData LocalTime -> PlotData -> AnyLayout1 LocalTime
 dataToPlot commonTimeAxis p@PlotBarsData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis [plotBars plot] (plotName p) (length (barsTitles p) > 1)
   where plot = plot_bars_values      ^= barsValues p $
                plot_bars_item_styles ^= barsStyles p $
+               plot_bars_style       ^= barsStyle p $
                plot_bars_titles      ^= "":barsTitles p $
                ourPlotBars
 dataToPlot commonTimeAxis p@PlotEventData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis [toPlot plot] (plotName p) False
