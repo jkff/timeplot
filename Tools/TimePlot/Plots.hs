@@ -32,7 +32,8 @@ initGen (KindACount bs)         = genActivity (\sns n -> n) bs
 initGen (KindAPercent bs b)     = genActivity (\sns n -> 100*n/b) bs
 initGen (KindAFreq bs)          = genActivity (\sns n -> if n == 0 then 0 else (n / sum (M.elems sns))) bs
 initGen (KindFreq bs k)         = genAtoms atoms2freqs bs k
-  where  atoms2freqs as m = let n = length as in 0:[fromIntegral (M.findWithDefault 0 a m)/fromIntegral n | a <- as]
+  where  atoms2freqs as m = let s = sum [c | (a,c) <- M.toList m] 
+                            in if s==0 then [0] else 0:[fromIntegral (M.findWithDefault 0 a m)/fromIntegral s | a <- as]
 initGen (KindHistogram bs k)    = genAtoms atoms2hist bs k
   where  atoms2hist as m = 0:[fromIntegral (M.findWithDefault 0 a m) | a <- as]
 initGen KindEvent               = genEvent
