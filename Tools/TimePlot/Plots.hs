@@ -61,7 +61,7 @@ plotTrackBars vals titles name colors = PlotBarsData {
         barsValues = vals,
         barsStyles = [ (solidFillStyle c, Nothing) 
                      | c <- transparent:map opaque colors],
-        barsTitles = titles
+        barsTitles = "":titles
     }
 
 plotLines :: String -> [(S.ByteString, [(LocalTime,Double)])] -> PlotData
@@ -153,7 +153,7 @@ genQuantile binSize qs name t0 t1 = I.filterMap valuesDropTrack $
     fmap (\tqs -> plotTrackBars tqs quantileTitles name colors) $
     I.collect
   where
-    quantileTitles = [""]++[show p1++".."++show p2++"%" | p1 <- percents | p2 <- tail percents]
+    quantileTitles = [show p1++".."++show p2++"%" | p1 <- percents | p2 <- tail percents]
     percents = map (floor . (*100.0)) $ [0.0] ++ qs ++ [1.0]
     diffs xs = zipWith (-) xs (0:xs)
 
@@ -249,7 +249,7 @@ genActivity f bs name t0 t1 = I.filterMap edges (h <$> uniqueSubtracks <*> binAr
     binAreas :: I.StreamSummary (LocalTime,S.ByteString,Edge) [(LocalTime, M.Map S.ByteString Double)]
     binAreas = fmap (map (\((t1,t2),m) -> (t1,m))) $ edges2binsSummary bs t0 t1
 
-    h tracks binAreas = (plotTrackBars barsData ("":map S.unpack tracks) name colors) { barsStyle = BarsStacked }
+    h tracks binAreas = (plotTrackBars barsData (map S.unpack tracks) name colors) { barsStyle = BarsStacked }
       where
         barsData = [(t, 0:map (f m . flip (M.findWithDefault 0) m) tracks) | (t,m) <- binAreas]
 
