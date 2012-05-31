@@ -134,6 +134,9 @@ readConf args = readConf' parseTime
         parseKind ("sum":_)        = error $ "sum requires one or two arguments: bin size and optionally " ++ 
                                              "subtrack style, e.g.: -dk 'sum 1' or -dk 'sum 1 stacked'"
         parseKind ("duration":ws)  = KindDuration  {subKind=parseKind ws}
+        parseKind (('w':'i':'t':'h':'i':'n':'[':sep:"]"):"->":suf:ws)
+                                   = let (sp, arr) = (S.pack suf, S.pack "->")
+                                     in KindWithin    {subKind=parseKind ws, mapName = (\x -> S.concat [x, arr, sp]) . fst . S.break (==sep)}
         parseKind (('w':'i':'t':'h':'i':'n':'[':sep:"]"):ws)
                                    = KindWithin    {subKind=parseKind ws, mapName = fst . S.break (==sep)}
         parseKind ["none"        ] = KindNone
