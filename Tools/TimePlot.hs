@@ -38,7 +38,7 @@ import qualified Tools.TimePlot.Incremental as I
 -- Pass 2:
 --  * Generate plot data (one-pass multiplexed to tracks)
 -- 
-makeChart :: (S.ByteString -> [ChartKind LocalTime]) -> 
+makeChart :: (S.ByteString -> [(ChartKind LocalTime, S.ByteString)]) -> 
              IO [(LocalTime, InEvent)] ->
              Maybe LocalTime -> Maybe LocalTime ->
              (LocalTime -> String -> String) -> 
@@ -49,9 +49,9 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
     then return emptyRenderable
     else do
       -- Pass 1: find out min/max time and final track names.
-      let i2o t KindNone                = []
-          i2o t (KindWithin mapName sk) = [(mapName t, sk)]
-          i2o t k                       = [(t, k)]
+      let i2o t (KindNone,                _) = []
+          i2o t (KindWithin mapName sk, suf) = [(S.append (mapName t) suf, sk)]
+          i2o t (k,                     suf) = [(S.append t suf, k)]
       let i2oTracks t = concatMap (i2o t) (chartKindF t)
       let t0 = fst (head events)
       let (minTime, maxTime, outTracks) = foldl' 
@@ -79,7 +79,7 @@ showHelp = mapM_ putStrLn [ "",
   "        See http://www.haskell.org/haskellwiki/Timeplot",
   "Usage: tplot [-o OFILE] [-of {png|pdf|ps|svg}] [-or 640x480]",
   "             -if IFILE [-tf TF] ",
-  "             [{+|-}k Pat1 Kind1 {+|-}k Pat2 Kind2 ...] [{+|-}dk KindN]",
+  "             [{+|-}k Pat1 '[+Suf1] Kind1' {+|-}k Pat2 '[+Suf2] Kind2' ...] [{+|-}dk '[+Suf] KindN']",
   "             [-fromTime TIME] [-toTime TIME] [-baseTime TIME]",
   "  -o  OFILE  - output file",
   "  -of        - output format (default: extension of -o)",
@@ -106,6 +106,15 @@ showHelp = mapM_ putStrLn [ "",
   "               matched: a track is drawn acc. to all matching +k, to +dk",
   "               AND ALSO to the first matching -k, or -dk if none of -k",
   "               match",
+  "               EXPLANATION OF SUF:",
+  "               If '+Suf' is present (e.g. +k request '+frequency freq 60'),",
+  "               then '.Suf' is appended to the input track name while mapping it",
+  "               to the output track. This is so that a single input track can",
+  "               participate in many output tracks - tplot can have only one output",
+  "               track with a particular name, so you can't have one track named",
+  "               'request' which draws 'freq 60' and another one for 'hist 60' - ",
+  "               you should use +k request '+frequency freq 60' +k request '+histogram hist 60'",
+  "               and you'll get output tracks 'request.frequency' and 'request.histogram'",
   "  -fromTime  - filter records whose time is >= this time",
   "               (formatted according to -tf)",
   "  -toTime    - filter records whose time is <  this time",
@@ -150,14 +159,6 @@ showHelp = mapM_ putStrLn [ "",
   "     group the events by supertrack and for each supertrack draw a graphical track",
   "     using the plot type SOMETHING. It's up to SOMETHING to do something with these",
   "     events, e.g. 'lines' will simply draw several line plots, one per subtrack.",
-  "     WARNING: If you use '+k' to map a single event to multiple 'within' plots, use",
-  "     the second form of within with suffix",
-  "  'within[C] -> SUF XXXX' - same as within[C] XXXX, but the name of a track like",
-  "     'job-JOBID' will be mapped not to 'job' but to 'job->SUF'. This is useful when",
-  "     you use it with '+k' - e.g. if you wish to plot both 'duration quantile' and ",
-  "     'duration binf' for some requests represented in the trace as '>req.PID'..'<req.PID'",
-  "     then use +k req 'within[.] -> qtile quantile ....' +k req 'within[.] -> bins binf ...'",
-  "     and you'll get 2 output tracks: req-qtile and req-bins.",
   "  'acount N' is for activity counts: a histogram is drawn with granularity",
   "     of N time units, where the bin corresponding to [t..t+N) has value",
   "     'what was the average number of active events or impulses in that",

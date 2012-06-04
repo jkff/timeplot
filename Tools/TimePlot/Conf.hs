@@ -22,7 +22,8 @@ data ConcreteConf t =
   ConcreteConf {
     inFile        :: !FilePath,
     parseTime     :: !(B.ByteString -> Maybe (t, B.ByteString)),
-    chartKindF    :: !(S.ByteString -> [ChartKind t]),
+    -- Input track -> (chart kind, suffix to append to track name for N:1 out:in mapping)
+    chartKindF    :: !(S.ByteString -> [(ChartKind t, S.ByteString)]),
 
     fromTime      :: !(Maybe t),
     toTime        :: !(Maybe t),
@@ -61,11 +62,7 @@ readConf args = readConf' parseTime
         inFile      = single "input file"  "-if" (error "No input file (-if) specified")
         outFile     = single "output file" "-o"  (error "No output file (-o) specified")
         outFormat   = maybe PNG id $ lookup (single "output format" "-of" (name2format outFile)) $
-            [("png",PNG), ("pdf",PDF), ("ps",PS), ("svg",SVG)
-#ifdef HAVE_GTK            
-            , ("x",Window)
-#endif            
-            ]
+            [("png",PNG), ("pdf",PDF), ("ps",PS), ("svg",SVG)]
           where
             name2format = reverse . takeWhile (/='.') . reverse
         outRes      = parseRes $ single "output resolution" "-or" "640x480"
@@ -73,12 +70,12 @@ readConf args = readConf' parseTime
             parseRes s = case break (=='x') s of (h,_:v) -> (read h,read v)
         forceList :: [a] -> ()
         forceList = foldr seq ()
-        chartKindF  = {-# SCC "chartKindF" #-} forceList [forceList plusKinds, forceList minusKinds, forceList defaultKindsPlus, defaultKindMinus `seq` ()] `seq` kindByRegex $
-            [(Cut,        matches regex, parseKind (words kind)) | [regex,kind] <- getArg "-k" 2 args] ++
-            [(Accumulate, matches regex, parseKind (words kind)) | [regex,kind] <- getArg "+k" 2 args]
+        chartKindF  = forceList [forceList plusKinds, forceList minusKinds, forceList defaultKindsPlus, defaultKindMinus `seq` ()] `seq` kindByRegex $
+            [(Cut,        matches regex, parseKind0 (words kind)) | [regex,kind] <- getArg "-k" 2 args] ++
+            [(Accumulate, matches regex, parseKind0 (words kind)) | [regex,kind] <- getArg "+k" 2 args]
           where
-            plusKinds  = [parseKind (words kind) | [regex, kind] <- getArg "+k" 2 args]
-            minusKinds = [parseKind (words kind) | [regex, kind] <- getArg "-k" 2 args]
+            plusKinds  = [parseKind0 (words kind) | [regex, kind] <- getArg "+k" 2 args]
+            minusKinds = [parseKind0 (words kind) | [regex, kind] <- getArg "-k" 2 args]
             kindByRegex rks s = if null specifiedKinds then [defaultKindMinus] else specifiedKinds
               where
                 specifiedKinds = defaultKindsPlus ++
@@ -94,6 +91,9 @@ readConf args = readConf' parseTime
           Nothing -> s
           Just bt -> showDelta t bt
 
+        parseKind0 (('+':suffix):k) = (parseKind k, S.pack "." `S.append` S.pack suffix)
+        parseKind0 k                = (parseKind k, S.empty)
+
         parseKind :: [String] -> ChartKind LocalTime
         parseKind ["acount",  n  ] = KindACount    {binSize=read n}
         parseKind ("acount":_)     = error "acount requires a single numeric argument, bin size, e.g.: -dk 'acount 1'"
@@ -101,11 +101,11 @@ readConf args = readConf' parseTime
         parseKind ("apercent":_)   = error "apercent requires two numeric arguments: bin size and base value, e.g.: -dk 'apercent 1 480'"
         parseKind ["afreq",   n  ] = KindAFreq     {binSize=read n}
         parseKind ("afreq":_)      = error "afreq requires a single numeric argument, bin size, e.g.: -dk 'afreq 1'"
-        parseKind ["freq",    n  ] = KindFreq      {binSize=read n,style=BarsClustered}
+        parseKind ["freq",    n  ] = KindFreq      {binSize=read n,style=BarsStacked}
         parseKind ["freq",    n,s] = KindFreq      {binSize=read n,style=parseStyle s}
         parseKind ("freq":_)       = error $ "freq requires a single numeric argument, bin size, e.g.: -dk 'freq 1', " ++ 
                                              "or two arguments, e.g.: -dk 'freq 1 clustered'"
-        parseKind ["hist",    n  ] = KindHistogram {binSize=read n,style=BarsClustered}
+        parseKind ["hist",    n  ] = KindHistogram {binSize=read n,style=BarsStacked}
         parseKind ["hist",    n,s] = KindHistogram {binSize=read n,style=parseStyle s}
         parseKind ("hist":_)       = error $ "hist requires a single numeric argument, bin size, e.g.: -dk 'hist 1', " ++ 
                                              "or two arguments, e.g.: -dk 'hist 1 clustered'"
@@ -134,9 +134,6 @@ readConf args = readConf' parseTime
         parseKind ("sum":_)        = error $ "sum requires one or two arguments: bin size and optionally " ++ 
                                              "subtrack style, e.g.: -dk 'sum 1' or -dk 'sum 1 stacked'"
         parseKind ("duration":ws)  = KindDuration  {subKind=parseKind ws}
-        parseKind (('w':'i':'t':'h':'i':'n':'[':sep:"]"):"->":suf:ws)
-                                   = let (sp, arr) = (S.pack suf, S.pack "->")
-                                     in KindWithin    {subKind=parseKind ws, mapName = (\x -> S.concat [x, arr, sp]) . fst . S.break (==sep)}
         parseKind (('w':'i':'t':'h':'i':'n':'[':sep:"]"):ws)
                                    = KindWithin    {subKind=parseKind ws, mapName = fst . S.break (==sep)}
         parseKind ["none"        ] = KindNone
@@ -145,8 +142,8 @@ readConf args = readConf' parseTime
         parseKind ("unspecified":_)= error "unspecified requires no arguments"
         parseKind ws               = error ("Unknown diagram kind " ++ unwords ws)
 
-        defaultKindMinus = parseKind $ words $ single "default kind" "-dk" "unspecified"
-        defaultKindsPlus = map (parseKind . words . head) $ getArg "+dk" 1 args
+        defaultKindMinus = parseKind0 $ words $ single "default kind" "-dk" "unspecified"
+        defaultKindsPlus = map (parseKind0 . words . head) $ getArg "+dk" 1 args
 
         parseStyle "stacked"   = BarsStacked
         parseStyle "clustered" = BarsClustered
