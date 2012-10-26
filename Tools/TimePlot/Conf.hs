@@ -13,6 +13,7 @@ import Data.List
 import Graphics.Rendering.Chart
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy.Char8 as B
+import Data.ByteString.Lex.Lazy.Double
 
 import Unsafe.Coerce
 
@@ -41,11 +42,17 @@ data KindChoiceOperator = Cut | Accumulate
 readConf :: [String] -> Conf
 readConf args = readConf' parseTime 
   where
-    pattern = case (words $ single "time format" "-tf" ("date %Y-%m-%d %H:%M:%OS")) of
+    pattern = case (words $ single "time format" "-tf" ("%Y-%m-%d %H:%M:%OS")) of
         "date":f -> B.pack (unwords f)
-        _        -> error "Unrecognized time format (-tf)"
+        f        -> B.pack (unwords f)
     {-# NOINLINE ourStrptime #-}
-    ourStrptime = strptime pattern
+    Just (ourBaseTime,_) = strptime "%Y-%m-%d %H:%M:%OS" "1900-01-01 00:00:00" 
+    ourStrptime :: B.ByteString -> Maybe (LocalTime, B.ByteString)
+    ourStrptime = if pattern == B.pack "elapsed" 
+                    then \s -> do
+                      (d, s') <- readDouble s
+                      return (fromSeconds d ourBaseTime `add` ourBaseTime, s')
+                    else strptime pattern
     parseTime s = ourStrptime s
 
     int2double = fromIntegral :: Int -> Double
@@ -85,7 +92,9 @@ readConf args = readConf' parseTime
 
         fromTime    = fst `fmap` (parseTime . B.pack $ single "minimum time (inclusive)" "-fromTime" "")
         toTime      = fst `fmap` (parseTime . B.pack $ single "maximum time (exclusive)" "-toTime"   "")
-        baseTime    = fst `fmap` (parseTime . B.pack $ single "base time"                "-baseTime" "")
+        baseTime    = if pattern == B.pack "elapsed"
+                        then Just ourBaseTime
+                        else (fst `fmap` (parseTime . B.pack $ single "base time"                "-baseTime" ""))
 
         transformLabel t s = case baseTime of
           Nothing -> s
