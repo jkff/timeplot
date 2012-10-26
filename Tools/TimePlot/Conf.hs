@@ -45,8 +45,8 @@ readConf args = readConf' parseTime
     pattern = case (words $ single "time format" "-tf" ("%Y-%m-%d %H:%M:%OS")) of
         "date":f -> B.pack (unwords f)
         f        -> B.pack (unwords f)
-    {-# NOINLINE ourStrptime #-}
     Just (ourBaseTime,_) = strptime "%Y-%m-%d %H:%M:%OS" "1900-01-01 00:00:00" 
+    {-# NOINLINE ourStrptime #-}
     ourStrptime :: B.ByteString -> Maybe (LocalTime, B.ByteString)
     ourStrptime = if pattern == B.pack "elapsed" 
                     then \s -> do
