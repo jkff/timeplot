@@ -44,7 +44,7 @@ initGen KindLines               = genLines
 initGen (KindDots     alpha)    = genDots alpha
 initGen (KindSum bs ss)         = genSum bs ss
 initGen (KindCumSum bs ss)      = genCumSum bs ss
-initGen (KindDuration sk)       = genDuration sk
+initGen (KindDuration sk dropSubtrack) = genDuration sk dropSubtrack 
 initGen (KindWithin _ _)        = \name -> error $ 
   "KindWithin should not be plotted (this is a bug): track " ++ show name
 initGen KindNone                = \name -> error $ 
@@ -334,13 +334,16 @@ edges2eventsSummary t0 t1 s = I.stateful (M.empty,s) step flush
         addEvent sum (s,(t0,_,st)) = I.insert sum (s, LongEvent (t0,True) (t1,False) st)
 
 edges2durationsSummary :: forall t . (Ord t, HasDelta t) => 
-    t -> t -> String -> StreamTransformer (t,S.ByteString,Edge) (t,InEvent)
+    t -> t -> Maybe String -> StreamTransformer (t,S.ByteString,Edge) (t,InEvent)
 edges2durationsSummary t0 t1 commonTrack = edges2eventsSummary t0 t1 . I.filterMap genDurations
   where
     genDurations (track, e) = case e of
-      LongEvent (t1,True) (t2,True) _ -> Just (t2, InValue commonTrackBS $ deltaToSeconds t2 t1)
+      LongEvent (t1,True) (t2,True) _ -> Just (t2, InValue (case commonTrack of 
+                                                              Nothing -> track
+                                                              _ -> commonTrackBS)
+                                                           (deltaToSeconds t2 t1))
       _                               -> Nothing
-    commonTrackBS = S.pack commonTrack
+    commonTrackBS = S.pack (fromJust commonTrack)
 
 genEvent :: PlotGen
 genEvent name t0 t1 = I.filterMap edges $ 
@@ -348,8 +351,9 @@ genEvent name t0 t1 = I.filterMap edges $
                       edges2eventsSummary t0 t1 I.collect
 -- TODO Multiple tracks
 
-genDuration :: ChartKind LocalTime -> PlotGen
-genDuration sk name t0 t1 = I.filterMap edges $ edges2durationsSummary t0 t1 name (initGen sk name t0 t1)
+genDuration :: ChartKind LocalTime -> Bool -> PlotGen
+genDuration sk dropSubtrack name t0 t1 = I.filterMap edges $ 
+    edges2durationsSummary t0 t1 (if dropSubtrack then Just name else Nothing) (initGen sk name t0 t1)
 
 fromListWith' f kvs = foldl' insert M.empty kvs
   where

@@ -48,6 +48,7 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
   if null events
     then return emptyRenderable
     else do
+      let dropLateEvents  es = case maxT of Just t -> takeWhile ((<t) . fst) es ; Nothing -> es
       -- Pass 1: find out min/max time and final track names.
       let i2o t (KindNone,                _) = []
           i2o t (KindWithin mapName sk, suf) = [(S.append (mapName t) suf, sk)]
@@ -57,7 +58,7 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
       let (minTime, maxTime, outTracks) = foldl' 
             (\(!mi,!ma,!ts) (t,e) -> (min t mi, max t ma, foldr (uncurry M.insert) ts (i2oTracks $ evt_track e))) 
             (t0, t0, M.empty) 
-            events
+            (dropLateEvents events)
 
       let minOutTime = case minT of Just t -> t ; Nothing -> minTime
       let maxOutTime = case maxT of Just t -> t ; Nothing -> maxTime
@@ -65,7 +66,7 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
       let commonTimeAxis = transformLabels $ autoAxis [minOutTime, maxOutTime]
       
       -- Pass 2
-      events' <- readEvents
+      events' <- dropLateEvents `fmap` readEvents
       let eventsToTracks = [(outTrack, (t,e)) | (t,e) <- events', (outTrack,_) <- i2oTracks (evt_track e)]
 
       let initPlot track = initGen (outTracks M.! track) (S.unpack track) minTime maxTime
@@ -141,12 +142,21 @@ showHelp = mapM_ putStrLn [ "",
   "  'none' - do not plot this track",
   "  'event' is for event diagrams: activities are drawn like --[===]--- ,",
   "     pulse events like --|-- with a label over '|'",
-  "  'duration XXXX' - plot any kind of diagram over the *durations* of events",
+  "  'duration [drop] XXXX' - plot any kind of diagram over the *durations* of events",
   "     on a track (delimited by > ... <), for example 'duration quantile",
   "     300 0.25,0.5,0.75' will plot these quantiles of durations of the",
   "     events. This is useful where your log looks like 'Started processing'",
   "     ... 'Finished processing': you can plot processing durations without",
   "     computing them yourself. Very useful inside 'within'!",
+  "     If you use 'drop', then names of the original input tracks will be dropped",
+  "     before putting the events onto the output track, e.g. an event rtime.14e3ac1",
+  "     when used by 'within[.] duration drop dots', will be put onto the output track",
+  "     'rtime', with input track 'rtime'. When used by 'within[.] duration dots',",
+  "     its input track will still be rtime.14e3ac1. The difference is whether",
+  "     the output of 'duration' appears to 'XXXX' as a single or multiple input tracks.",
+  "     E.g. if you're measuring durations of processing unique requests with rtime.REQID,",
+  "     then use 'drop'; if it's durations of processing at certain stages with rtime.STAGE",
+  "     then don't.",
   "  'within[C] XXXX' - draw plot XXXX over events grouped by their track's name ",
   "     before separator C. For example, if you have processes",
   "     named 'MACHINE-PID' (i.e. UNIT027-8532) say 'begin something' / ",

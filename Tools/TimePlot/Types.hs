@@ -91,7 +91,7 @@ instance Read NominalDiffTime where
 data SumSubtrackStyle = SumStacked | SumOverlayed
 
 data ChartKind t = KindEvent
-               | KindDuration  { subKind :: ChartKind t }
+               | KindDuration  { subKind :: ChartKind t, dropSubtrack :: Bool }
                | KindWithin    { mapName :: S.ByteString -> S.ByteString, subKind :: ChartKind t }
                | KindACount    { binSize :: Delta t }
                | KindAPercent  { binSize :: Delta t, baseCount :: Double }
