@@ -3,6 +3,9 @@ module Graphics.Rendering.Chart.Event (
     PlotEvent(..),
     Event(..),
 
+    eventStart,
+    eventEnd,
+
     defaultPlotEvent,
     plot_event_title,
     plot_event_data,
@@ -25,6 +28,12 @@ data Event t e = LongEvent (t,Bool) (t,Bool) e  -- ^ An event that has a beginni
                                                 --   True = "known explicitly", False = "implicit" (e.g. imposed by axis bounds)
                | PulseEvent t e   -- ^ A zero-length event
                deriving (Show)
+
+eventStart (LongEvent (t0,_) (t1,_) _) = t0
+eventStart (PulseEvent t _) = t
+
+eventEnd (LongEvent (t0,_) (t1,_) _) = t1
+eventEnd (PulseEvent t _) = t
 
 -- | A chart that depict events.
 -- There are two kinds of events: long and impulse events. A long event

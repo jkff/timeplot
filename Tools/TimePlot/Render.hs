@@ -23,20 +23,31 @@ mapAxisData f f' (AxisData vp pv ticks labels grid) = AxisData
     (map f' grid)
 
 dataToPlot :: AxisData LocalTime -> (LocalTime,LocalTime) -> PlotData -> AnyLayout1 LocalTime
-dataToPlot commonTimeAxis tr p@PlotBarsData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis tr [plotBars plot] (plotName p) (length (barsTitles p) > 1)
+dataToPlot commonTimeAxis tr = dataToPlot' commonTimeAxis . constrainTime tr
+
+constrainTime :: (LocalTime,LocalTime) -> PlotData -> PlotData
+constrainTime tr@(t0,t1) p@PlotBarsData{} = p {barsValues = filter (inRange tr . fst) (barsValues p)}
+constrainTime tr@(t0,t1) p@PlotEventData{} = p {eventData = filter (any (inRange tr) . eventTimes) (eventData p)}
+constrainTime tr@(t0,t1) p@PlotLinesData{} = p {linesData = map (filter (inRange tr . fst)) (linesData p)}
+constrainTime tr@(t0,t1) p@PlotDotsData{} = p {dotsData = map (filter (inRange tr . fst)) (dotsData p)}
+
+inRange (t0,t1) t = t>=t0 && t<=t1
+eventTimes e = [eventStart e, eventEnd e]
+
+dataToPlot' commonTimeAxis p@PlotBarsData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis [plotBars plot] (plotName p) (length (barsTitles p) > 1)
   where plot = plot_bars_values      ^= barsValues p $
                plot_bars_item_styles ^= barsStyles p $
                plot_bars_style       ^= barsStyle p $
                plot_bars_titles      ^= barsTitles p $
                ourPlotBars
-dataToPlot commonTimeAxis tr p@PlotEventData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis tr [toPlot plot] (plotName p) False
+dataToPlot' commonTimeAxis p@PlotEventData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis [toPlot plot] (plotName p) False
   where plot = plot_event_data           ^= eventData p $
                plot_event_long_fillstyle ^= toFillStyle $
                plot_event_label          ^= toLabel     $
                defaultPlotEvent
         toFillStyle s = solidFillStyle . opaque $ fromMaybe lightgray (readColourName (statusColor s))
         toLabel     s = statusLabel s 
-dataToPlot commonTimeAxis tr p@PlotLinesData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis tr (map toPlot plots) (plotName p) (length (linesData p) > 1)
+dataToPlot' commonTimeAxis p@PlotLinesData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis (map toPlot plots) (plotName p) (length (linesData p) > 1)
   where plots = [plot_lines_values ^= [vs] $ 
                  plot_lines_title  ^= title $ 
                  plot_lines_style  ^= lineStyle $ 
@@ -44,7 +55,7 @@ dataToPlot commonTimeAxis tr p@PlotLinesData{} = withAnyOrdinate $ layoutWithTit
                  | vs <- linesData p
                  | title <- linesTitles p
                  | lineStyle <- linesStyles p]
-dataToPlot commonTimeAxis tr p@PlotDotsData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis tr (map toPlot plots) (plotName p) (length (dotsData p) > 1)
+dataToPlot' commonTimeAxis p@PlotDotsData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis (map toPlot plots) (plotName p) (length (dotsData p) > 1)
   where plots = [plot_points_values ^= vs $
                  plot_points_style  ^= hollowCircles 4 1 color $
                  plot_points_title  ^= subtrack $
@@ -53,21 +64,17 @@ dataToPlot commonTimeAxis tr p@PlotDotsData{} = withAnyOrdinate $ layoutWithTitl
                  | color <- dotsColors p
                  | vs <- dotsData p]
 
--- TODO generate left axis from data fitting into t0..t1
-layoutWithTitle :: (PlotValue a) => AxisData LocalTime -> (LocalTime, LocalTime) -> [Plot LocalTime a] -> String -> Bool -> Layout1 LocalTime a
-layoutWithTitle commonTimeAxis (t0,t1) plots name showLegend =
+layoutWithTitle :: (PlotValue a, Show a) => AxisData LocalTime -> [Plot LocalTime a] -> String -> Bool -> Layout1 LocalTime a
+layoutWithTitle commonTimeAxis plots name showLegend =
     layout1_title ^= "" $
     layout1_plots ^= map Left plots $
     (if showLegend then id else (layout1_legend ^= Nothing)) $
     layout1_bottom_axis .> laxis_generate ^= (\_ -> commonTimeAxis) $
     layout1_top_axis    .> laxis_generate ^= (\_ -> commonTimeAxis) $
     layout1_left_axis   .> laxis_title ^= name $
-    layout1_left_axis   .> laxis_generate ^= (\_ -> autoAxis visibleValues) $
     layout1_margin ^= 0 $
     layout1_grid_last ^= True $
     defaultLayout1
-  where
-    visibleValues = [a | p <- plots, (t,a) <- uncurry zip $ plot_all_points_ p, t >= t0 && t <= t1]
 
 ourPlotBars :: (BarsPlotValue a) => PlotBars LocalTime a
 ourPlotBars = plot_bars_spacing ^= BarsFixGap 0 0 $
