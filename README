@@ -1,7 +1,5 @@
 This tool, together with splot (http://github.com/jkff/splot), aims to make tasks of visualizing/analyzing system behavior based on log files into shell one-liners.
 
-See presentation: http://www.slideshare.net/jkff/two-visualization-tools or download: http://jkff.info/presentations/two-visualization-tools.pdf
-
-Also see current documentation page: http://www.haskell.org/haskellwiki/Timeplot
+See documentation, distributions etc. at http://jkff.info/software/timeplotters/
 
 Also see hackage package: http://hackage.haskell.org/package/timeplot
