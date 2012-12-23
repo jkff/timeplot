@@ -14,14 +14,6 @@ import Data.Maybe
 import Tools.TimePlot.Types
 import Tools.TimePlot.Plots
 
-mapAxisData :: (a -> b) -> (b -> a) -> AxisData b -> AxisData a
-mapAxisData f f' (AxisData vp pv ticks labels grid) = AxisData 
-    (\range x -> vp range (f x)) 
-    (\range v -> f' (pv range v)) 
-    (map (\(x,t) -> (f' x, t)) ticks) 
-    (map (map (\(x,lab) -> (f' x, lab))) labels) 
-    (map f' grid)
-
 dataToPlot :: AxisData LocalTime -> (LocalTime,LocalTime) -> PlotData -> AnyLayout1 LocalTime
 dataToPlot commonTimeAxis tr = dataToPlot' commonTimeAxis . constrainTime tr
 
