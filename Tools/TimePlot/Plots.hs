@@ -122,13 +122,19 @@ genByBins f timeBinSize valueBinBounds name t0 t1 = I.filterMap valuesDropTrack 
     (\tfs -> plotTrackBars tfs binTitles name colors) <$>
     I.collect
   where
-    binTitles = [low]++[show v1++".."++show v2 
+    binTitles = [low]++[showDt v1++".."++showDt v2 
                        | v1 <- valueBinBounds 
                        | v2 <- tail valueBinBounds]++
                 [high]
       where
-        low = "<"++show (head valueBinBounds)
-        high = ">"++show (last valueBinBounds)
+        low = "<"++showDt (head valueBinBounds)
+        high = ">"++showDt (last valueBinBounds)
+
+-- 0.1s but 90ms, etc.
+showDt t | t < 0.0000001 = show (t*1000000000) ++ "ns"
+         | t < 0.0001    = show (t*1000000) ++ "us"
+         | t < 0.1       = show (t*1000) ++ "ms"
+         | True          = show t ++ "s"
 
 genBinHist :: NominalDiffTime -> [Double] -> PlotGen
 genBinFreqs :: NominalDiffTime -> [Double] -> PlotGen
@@ -277,7 +283,7 @@ edges2binsSummary binSize tMin tMax = I.stateful (M.empty, iterate (add binSize)
         !m' = fmap (\(_,_,nopen,_) -> (0,t2,nopen,0)) m
 
     step ev@(t, s, e) st@(m, t1:t2:ts, r)
-      | t < t1  = error "Times are not in ascending order"
+      | t < t1  = error $ "Times are not in ascending order, first violating is " ++ show t
       | t >= t2 = step ev (flushBin st)
       | True    = step'' ev st
 
