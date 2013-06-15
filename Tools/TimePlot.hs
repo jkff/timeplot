@@ -73,7 +73,9 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
       let plots = I.runStreamSummary (I.byKey initPlot) eventsToTracks
       
       -- Render
-      return $ renderLayout1sStacked $ map (dataToPlot commonTimeAxis (minOutTime,maxOutTime)) (M.elems plots)
+      return $ renderStackedLayouts $
+        slayouts_layouts ^= map (dataToPlot commonTimeAxis (minOutTime,maxOutTime)) (M.elems plots) $
+        defaultStackedLayouts
 
 showHelp = mapM_ putStrLn [ "",
   "tplot - a tool for drawing timing diagrams.",
