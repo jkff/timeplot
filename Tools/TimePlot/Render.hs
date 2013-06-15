@@ -14,7 +14,7 @@ import Data.Maybe
 import Tools.TimePlot.Types
 import Tools.TimePlot.Plots
 
-dataToPlot :: AxisData LocalTime -> (LocalTime,LocalTime) -> PlotData -> AnyLayout1 LocalTime
+dataToPlot :: AxisData LocalTime -> (LocalTime,LocalTime) -> PlotData -> StackedLayout LocalTime
 dataToPlot commonTimeAxis tr = dataToPlot' commonTimeAxis . constrainTime tr
 
 constrainTime :: (LocalTime,LocalTime) -> PlotData -> PlotData
@@ -26,20 +26,21 @@ constrainTime tr@(t0,t1) p@PlotDotsData{} = p {dotsData = map (filter (inRange t
 inRange (t0,t1) t = t>=t0 && t<=t1
 eventTimes e = [eventStart e, eventEnd e]
 
-dataToPlot' commonTimeAxis p@PlotBarsData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis [plotBars plot] (plotName p) (length (barsTitles p) > 1)
+dataToPlot' :: AxisData LocalTime -> PlotData -> StackedLayout LocalTime
+dataToPlot' commonTimeAxis p@PlotBarsData{} = StackedLayout $ layoutWithTitle commonTimeAxis [plotBars plot] (plotName p) (length (barsTitles p) > 1)
   where plot = plot_bars_values      ^= barsValues p $
                plot_bars_item_styles ^= barsStyles p $
                plot_bars_style       ^= barsStyle p $
                plot_bars_titles      ^= barsTitles p $
                ourPlotBars
-dataToPlot' commonTimeAxis p@PlotEventData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis [toPlot plot] (plotName p) False
+dataToPlot' commonTimeAxis p@PlotEventData{} = StackedLayout $ layoutWithTitle commonTimeAxis [toPlot plot] (plotName p) False
   where plot = plot_event_data           ^= eventData p $
                plot_event_long_fillstyle ^= toFillStyle $
                plot_event_label          ^= toLabel     $
                defaultPlotEvent
         toFillStyle s = solidFillStyle . opaque $ fromMaybe lightgray (readColourName (statusColor s))
         toLabel     s = statusLabel s 
-dataToPlot' commonTimeAxis p@PlotLinesData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis (map toPlot plots) (plotName p) (length (linesData p) > 1)
+dataToPlot' commonTimeAxis p@PlotLinesData{} = StackedLayout $ layoutWithTitle commonTimeAxis (map toPlot plots) (plotName p) (length (linesData p) > 1)
   where plots = [plot_lines_values ^= [vs] $ 
                  plot_lines_title  ^= title $ 
                  plot_lines_style  ^= lineStyle $ 
@@ -47,7 +48,7 @@ dataToPlot' commonTimeAxis p@PlotLinesData{} = withAnyOrdinate $ layoutWithTitle
                  | vs <- linesData p
                  | title <- linesTitles p
                  | lineStyle <- linesStyles p]
-dataToPlot' commonTimeAxis p@PlotDotsData{} = withAnyOrdinate $ layoutWithTitle commonTimeAxis (map toPlot plots) (plotName p) (length (dotsData p) > 1)
+dataToPlot' commonTimeAxis p@PlotDotsData{} = StackedLayout $ layoutWithTitle commonTimeAxis (map toPlot plots) (plotName p) (length (dotsData p) > 1)
   where plots = [plot_points_values ^= vs $
                  plot_points_style  ^= hollowCircles 4 1 color $
                  plot_points_title  ^= subtrack $
