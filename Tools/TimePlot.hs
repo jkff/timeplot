@@ -6,7 +6,9 @@ import Data.Version (showVersion)
 import Distribution.VcsRevision.Git
 import Language.Haskell.TH.Syntax
 
+import Control.Lens
 import Control.Monad
+import Data.Default
 import Data.List
 import Data.Ord
 import qualified Data.Map as M
@@ -17,9 +19,8 @@ import System.Exit
 
 import Data.Time hiding (parseTime)
 
-import Data.Accessor
-
 import Graphics.Rendering.Chart
+import Graphics.Rendering.Chart.Backend.Cairo
 
 import Tools.TimePlot.Types
 import Tools.TimePlot.Conf
@@ -62,7 +63,7 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
 
       let minOutTime = case minT of Just t -> t ; Nothing -> minTime
       let maxOutTime = case maxT of Just t -> t ; Nothing -> maxTime
-      let transformLabels axis = axis { axis_labels_ = map (map (\(t, s) -> (t, transformLabel t s))) (axis_labels_ axis) }
+      let transformLabels axis = axis & axis_labels %~ map (map (\(t, s) -> (t, transformLabel t s)))
       let commonTimeAxis = transformLabels $ autoAxis [minOutTime, maxOutTime]
       
       -- Pass 2
@@ -74,8 +75,8 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
       
       -- Render
       return $ renderStackedLayouts $
-        slayouts_layouts ^= map (dataToPlot commonTimeAxis (minOutTime,maxOutTime)) (M.elems plots) $
-        defaultStackedLayouts
+        slayouts_layouts .~ map (dataToPlot commonTimeAxis (minOutTime,maxOutTime)) (M.elems plots) $
+        def
 
 showHelp = mapM_ putStrLn [ "",
   "tplot - a tool for drawing timing diagrams.",

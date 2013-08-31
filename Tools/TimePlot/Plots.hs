@@ -14,8 +14,6 @@ import qualified Data.ByteString.Char8 as S
 
 import Data.Time
 
-import Data.Accessor
-
 import Graphics.Rendering.Chart
 import Graphics.Rendering.Chart.Event
 
@@ -32,7 +30,7 @@ initGen (KindACount bs)         = genActivity (\sns n -> n) bs
 initGen (KindAPercent bs b)     = genActivity (\sns n -> 100*n/b) bs
 initGen (KindAFreq bs)          = genActivity (\sns n -> if n == 0 then 0 else (n / sum (M.elems sns))) bs
 initGen (KindFreq bs k)         = genAtoms atoms2freqs bs k
-  where  atoms2freqs as m = let s = sum [c | (a,c) <- M.toList m] 
+  where  atoms2freqs as m = let s = sum [c | (a,c) <- M.toList m]
                             in if s==0 then [0] else 0:[fromIntegral (M.findWithDefault 0 a m)/fromIntegral s | a <- as]
 initGen (KindHistogram bs k)    = genAtoms atoms2hist bs k
   where  atoms2hist as m = 0:[fromIntegral (M.findWithDefault 0 a m) | a <- as]
@@ -44,12 +42,12 @@ initGen KindLines               = genLines
 initGen (KindDots     alpha)    = genDots alpha
 initGen (KindSum bs ss)         = genSum bs ss
 initGen (KindCumSum bs ss)      = genCumSum bs ss
-initGen (KindDuration sk dropSubtrack) = genDuration sk dropSubtrack 
-initGen (KindWithin _ _)        = \name -> error $ 
+initGen (KindDuration sk dropSubtrack) = genDuration sk dropSubtrack
+initGen (KindWithin _ _)        = \name -> error $
   "KindWithin should not be plotted (this is a bug): track " ++ show name
-initGen KindNone                = \name -> error $ 
+initGen KindNone                = \name -> error $
   "KindNone should not be plotted (this is a bug): track " ++ show name
-initGen KindUnspecified         = \name -> error $ 
+initGen KindUnspecified         = \name -> error $
   "Kind not specified for track " ++ show name ++ " (have you misspelled -dk or any of -k arguments?)"
 
 -- Auxiliary functions for two common plot varieties
@@ -59,7 +57,7 @@ plotTrackBars vals titles name colors = PlotBarsData {
         plotName = name,
         barsStyle = BarsStacked,
         barsValues = vals,
-        barsStyles = [ (solidFillStyle c, Nothing) 
+        barsStyles = [ (solidFillStyle c, Nothing)
                      | c <- transparent:map opaque colors],
         barsTitles = "":titles
     }
@@ -116,14 +114,14 @@ summaryByFixedTimeBins t0 binSize = I.byTimeBins (iterate (add binSize) t0)
 
 -- Arguments of f will be: value bin boundaries, values in the current time bin
 genByBins :: ([Double] -> [Double] -> [Double]) -> NominalDiffTime -> [Double] -> PlotGen
-genByBins f timeBinSize valueBinBounds name t0 t1 = I.filterMap valuesDropTrack $ 
+genByBins f timeBinSize valueBinBounds name t0 t1 = I.filterMap valuesDropTrack $
     summaryByFixedTimeBins t0 timeBinSize $
     I.mapInput (\(t,xs) -> (t, 0:f valueBinBounds xs)) $
     (\tfs -> plotTrackBars tfs binTitles name colors) <$>
     I.collect
   where
-    binTitles = [low]++[showDt v1++".."++showDt v2 
-                       | v1 <- valueBinBounds 
+    binTitles = [low]++[showDt v1++".."++showDt v2
+                       | v1 <- valueBinBounds
                        | v2 <- tail valueBinBounds]++
                 [high]
       where
@@ -188,7 +186,7 @@ getQuantiles qs = quantiles' . sort
 genAtoms :: ([S.ByteString] -> M.Map S.ByteString Int -> [Double]) ->
            NominalDiffTime -> PlotBarsStyle -> PlotGen
 genAtoms f binSize k name t0 t1 = I.filterMap atomsDropTrack (h <$> unique (\(t,atom) -> atom) <*> fInBins)
-  where 
+  where
     fInBins :: I.StreamSummary (LocalTime, S.ByteString) [(LocalTime, M.Map S.ByteString Int)]
     fInBins = summaryByFixedTimeBins t0 binSize $ I.mapInput (second counts) I.collect
     counts  = foldl' insert M.empty
@@ -208,7 +206,7 @@ uniqueSubtracks = unique (\(t,s,a) -> s)
 
 genSum :: NominalDiffTime -> SumSubtrackStyle -> PlotGen
 genSum binSize ss name t0 t1 = I.filterMap values (h <$> uniqueSubtracks <*> sumsInBins t0 binSize)
-  where 
+  where
     h :: [S.ByteString] -> [(LocalTime, M.Map S.ByteString Double)] -> PlotData
     h tracks binSums = plotLines name rows
       where
@@ -218,7 +216,7 @@ genSum binSize ss name t0 t1 = I.filterMap values (h <$> uniqueSubtracks <*> sum
 
         stack :: M.Map S.ByteString Double -> [(S.ByteString, Double)]
         stack ss = zip tracks (scanl1 (+) (map (\x -> M.findWithDefault 0 x ss) tracks))
-        
+
         rows :: [(S.ByteString, [(LocalTime, Double)])]
         rows = M.toList $ fmap sort $ M.fromListWith (++) $
           [(track, [(t,sum)]) | (t, m) <- rowsT', (track, sum) <- m]
@@ -234,11 +232,11 @@ genCumSum bs ss name t0 t1 = I.filterMap values (accumulate <$> uniqueSubtracks 
   where
     accumulate :: [S.ByteString] -> [(LocalTime, M.Map S.ByteString Double)] -> PlotData
     accumulate tracks tss = plotLines name [(track, [(t, ss M.! track) | (t,ss) <- cumsums]) | track <- tracks]
-      where 
+      where
         cumsums = scanl' f (t0, M.fromList $ zip tracks (repeat 0)) (map normalize tss)
         normalize (t,binSums) = (t, M.fromList [ (track, M.findWithDefault 0 track binSums) | track <- tracks ])
 
-        f (_,bases) (t,binSums) = (t,) $ M.fromList $ zip tracks $ zipWith (+) trackBases $ case ss of 
+        f (_,bases) (t,binSums) = (t,) $ M.fromList $ zip tracks $ zipWith (+) trackBases $ case ss of
             SumOverlayed -> trackSums
             SumStacked   -> trackAccSums
           where
@@ -251,7 +249,7 @@ scanl' f !x0 (x:xs) = x0:scanl' f (f x0 x) xs
 
 genActivity :: (M.Map S.ByteString Double -> Double -> Double) -> NominalDiffTime -> PlotGen
 genActivity f bs name t0 t1 = I.filterMap edges (h <$> uniqueSubtracks <*> binAreas)
-  where 
+  where
     binAreas :: I.StreamSummary (LocalTime,S.ByteString,Edge) [(LocalTime, M.Map S.ByteString Double)]
     binAreas = fmap (map (\((t1,t2),m) -> (t1,m))) $ edges2binsSummary bs t0 t1
 
@@ -259,13 +257,13 @@ genActivity f bs name t0 t1 = I.filterMap edges (h <$> uniqueSubtracks <*> binAr
       where
         barsData = [(t, 0:map (f m . flip (M.findWithDefault 0) m) tracks) | (t,m) <- binAreas]
 
-edges2binsSummary :: (Ord t,HasDelta t,Show t) => 
-    Delta t -> t -> t -> 
+edges2binsSummary :: (Ord t,HasDelta t,Show t) =>
+    Delta t -> t -> t ->
     I.StreamSummary (t,S.ByteString,Edge) [((t,t), M.Map S.ByteString Double)]
 edges2binsSummary binSize tMin tMax = I.stateful (M.empty, iterate (add binSize) tMin, []) step flush
   where
     -- State: (m, ts, r) where:
-    --  * m  = subtrack => state of current bin: 
+    --  * m  = subtrack => state of current bin:
     --    (area, starting time, level = rise-fall, num pulse events)
     --  * ts = infinite list of time bin boundaries
     --  * r  = reversed list of results per bins
@@ -277,7 +275,7 @@ edges2binsSummary binSize tMin tMax = I.stateful (M.empty, iterate (add binSize)
       where
         states = M.toList m
         binSizeSec = deltaToSeconds t2 t1
-        binValue (area,start,nopen,npulse) = 
+        binValue (area,start,nopen,npulse) =
           (fromIntegral npulse + area + deltaToSeconds t2 start*nopen) / binSizeSec
         !r' = ((t1,t2), M.fromList [(s, binValue bin) | (s, bin) <- states]) : r
         !m' = fmap (\(_,_,nopen,_) -> (0,t2,nopen,0)) m
@@ -289,19 +287,19 @@ edges2binsSummary binSize tMin tMax = I.stateful (M.empty, iterate (add binSize)
 
     step'' ev@(t,s,e) st@(m, t1:t2:ts, r) = if (t < t1 || t >= t2) then error "Outside bin" else step' ev st
     step' (t, s, SetTo _) st = st
-    step' (t, s, Pulse _) st = modState s t st $ 
+    step' (t, s, Pulse _) st = modState s t st $
       \(!area, !start, !nopen, !npulse) -> (area,                                   t, nopen,   npulse+1)
-    step' (t, s, Rise)    st = modState s t st $ 
+    step' (t, s, Rise)    st = modState s t st $
       \(!area, !start, !nopen, !npulse) -> (area+deltaToSeconds t start*nopen, t, nopen+1, npulse)
-    step' (t, s, Fall)    st = modState s t st $ 
+    step' (t, s, Fall)    st = modState s t st $
       \(!area, !start, !nopen, !npulse) -> (area+deltaToSeconds t start*nopen, t, nopen-1, npulse)
-    flush st@(m, t1:t2:ts, r) 
+    flush st@(m, t1:t2:ts, r)
       | t2 <= tMax = flush (flushBin st)
       | True       = reverse r
 
 type StreamTransformer a b = forall r . I.StreamSummary b r -> I.StreamSummary a r
 
-edges2eventsSummary :: forall t . (Ord t) => 
+edges2eventsSummary :: forall t . (Ord t) =>
     t -> t -> StreamTransformer (t,S.ByteString,Edge) (S.ByteString, Event t Status)
 edges2eventsSummary t0 t1 s = I.stateful (M.empty,s) step flush
   where
@@ -313,7 +311,7 @@ edges2eventsSummary t0 t1 s = I.stateful (M.empty,s) step flush
     getTrack  s   (!ts,sum) = M.findWithDefault (t0, 0, emptyStatus) s ts
     putTrack  s t (!ts,sum) = (M.insert s t ts, sum)
     killTrack s   (!ts,sum) = (M.delete s   ts, sum)
-    trackCase s whenZero withNonzero st 
+    trackCase s whenZero withNonzero st
         | numActive == 0 = whenZero
         | True           = withNonzero t0 numActive status
       where (t0, numActive, status) = getTrack s st
@@ -321,12 +319,12 @@ edges2eventsSummary t0 t1 s = I.stateful (M.empty,s) step flush
     emptyStatus = Status "" ""
 
     step (t,s,Pulse st) state = tellSummary (s, PulseEvent t st) state
-    step (t,s,SetTo st) state = trackCase s 
+    step (t,s,SetTo st) state = trackCase s
                                       (putTrack s (t, 1, st) state)
                                       (\t0 !n st0 -> putTrack s (t,n,st) $ tellSummary (s, LongEvent (t0,True) (t,True) st0) state)
                                       state
-    step (t,s,Rise)     state = trackCase s 
-                                      (putTrack s (t, 1, emptyStatus) state) 
+    step (t,s,Rise)     state = trackCase s
+                                      (putTrack s (t, 1, emptyStatus) state)
                                       (\t0 !n st  -> putTrack s (t, n+1, st) state)
                                       state
     step (t,s,Fall)     state
@@ -339,12 +337,12 @@ edges2eventsSummary t0 t1 s = I.stateful (M.empty,s) step flush
       where
         addEvent sum (s,(t0,_,st)) = I.insert sum (s, LongEvent (t0,True) (t1,False) st)
 
-edges2durationsSummary :: forall t . (Ord t, HasDelta t) => 
+edges2durationsSummary :: forall t . (Ord t, HasDelta t) =>
     t -> t -> Maybe String -> StreamTransformer (t,S.ByteString,Edge) (t,InEvent)
 edges2durationsSummary t0 t1 commonTrack = edges2eventsSummary t0 t1 . I.filterMap genDurations
   where
     genDurations (track, e) = case e of
-      LongEvent (t1,True) (t2,True) _ -> Just (t2, InValue (case commonTrack of 
+      LongEvent (t1,True) (t2,True) _ -> Just (t2, InValue (case commonTrack of
                                                               Nothing -> track
                                                               _ -> commonTrackBS)
                                                            (deltaToSeconds t2 t1))
@@ -352,13 +350,13 @@ edges2durationsSummary t0 t1 commonTrack = edges2eventsSummary t0 t1 . I.filterM
     commonTrackBS = S.pack (fromJust commonTrack)
 
 genEvent :: PlotGen
-genEvent name t0 t1 = I.filterMap edges $ 
-                      fmap (\evs -> PlotEventData { plotName = name, eventData = map snd evs }) $ 
+genEvent name t0 t1 = I.filterMap edges $
+                      fmap (\evs -> PlotEventData { plotName = name, eventData = map snd evs }) $
                       edges2eventsSummary t0 t1 I.collect
 -- TODO Multiple tracks
 
 genDuration :: ChartKind LocalTime -> Bool -> PlotGen
-genDuration sk dropSubtrack name t0 t1 = I.filterMap edges $ 
+genDuration sk dropSubtrack name t0 t1 = I.filterMap edges $
     edges2durationsSummary t0 t1 (if dropSubtrack then Just name else Nothing) (initGen sk name t0 t1)
 
 fromListWith' f kvs = foldl' insert M.empty kvs
@@ -370,4 +368,3 @@ fromListWith' f kvs = foldl' insert M.empty kvs
 colors = cycle [green,blue,red,brown,yellow,orange,grey,purple,violet,lightblue]
 
 groupByTrack xs = M.toList $ sort `fmap` M.fromListWith (++) [(s, [(t,v)]) | (t,s,v) <- xs]
-
