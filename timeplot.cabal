@@ -29,9 +29,9 @@ executable tplot
     buildable: True
     ghc-options: -rtsopts
     other-modules: Graphics.Rendering.Chart.Event
-    build-depends: Chart >=0.17 && < 0.18, base >=3 && <5, bytestring -any,
+    build-depends: Chart == 1.*, Chart-cairo == 1.*, base >=3 && <5, bytestring -any,
                    bytestring-lexing -any, cairo -any, colour -any, containers -any,
-                   data-accessor ==0.2.*, data-accessor-template >=0.2.1.1 && <0.3,
+                   data-default -any, lens >= 3.9,
                    regex-tdfa -any, strptime >=0.1.7, time -any,
                    transformers -any,
                    vcs-revision -any, template-haskell -any

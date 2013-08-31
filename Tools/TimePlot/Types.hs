@@ -5,7 +5,6 @@ import Data.Time hiding (parseTime)
 import qualified Data.ByteString.Char8 as S
 import Graphics.Rendering.Chart
 import Data.Colour
-import Data.Accessor
 import Graphics.Rendering.Chart.Event
 
 data Status = Status {statusColor :: String, statusLabel :: String} deriving (Eq, Show, Ord)
@@ -17,11 +16,11 @@ instance PlotValue Status where
 
 unitStatusAxis :: AxisData Status
 unitStatusAxis = AxisData {
-    axis_viewport_ = \(x0,x1) _ -> (x0+x1)/2,
-    axis_tropweiv_ = \_       _ -> Status "" "",
-    axis_ticks_    = [(Status "" "", 0)],
-    axis_labels_   = [[(Status "" "", "")]],
-    axis_grid_     = []
+  _axis_viewport = \(x0,x1) _ -> (x0+x1)/2,
+  _axis_tropweiv = \_       _ -> Status "" "",
+  _axis_ticks    = [(Status "" "", 0)],
+  _axis_labels   = [[(Status "" "", "")]],
+  _axis_grid     = []
 }
 
 data Edge = Rise | Fall | Pulse Status | SetTo Status deriving (Eq,Show)
@@ -101,22 +100,20 @@ data ChartKind t = KindEvent
                | KindBinHist   { binSize :: Delta t, delims    :: [Double] }
                | KindFreq      { binSize :: Delta t, style :: PlotBarsStyle }
                | KindHistogram { binSize :: Delta t, style :: PlotBarsStyle }
-               | KindLines     
+               | KindLines
                | KindDots      { alpha :: Double }
                | KindCumSum    { binSize :: Delta t, subtrackStyle :: SumSubtrackStyle }
                | KindSum       { binSize :: Delta t, subtrackStyle :: SumSubtrackStyle }
                | KindNone
-               | KindUnspecified -- Causes an error message 
+               | KindUnspecified -- Causes an error message
 
-instance Show CairoLineStyle where show _ = "<line>"
-instance Show CairoFillStyle where show _ = "<fill>"
 data PlotData = PlotBarsData
                 {
                     plotName :: String,
-                    barsStyle :: PlotBarsStyle, 
-                    barsValues :: [ (LocalTime, [Double]) ], 
-                    barsStyles :: [(CairoFillStyle, Maybe CairoLineStyle)], 
-                    barsTitles :: [String] 
+                    barsStyle :: PlotBarsStyle,
+                    barsValues :: [ (LocalTime, [Double]) ],
+                    barsStyles :: [(FillStyle, Maybe LineStyle)],
+                    barsTitles :: [String]
                 }
               | PlotEventData
                 {
@@ -127,7 +124,7 @@ data PlotData = PlotBarsData
                 {
                     plotName :: String,
                     linesData :: [[(LocalTime, Double)]],
-                    linesStyles :: [CairoLineStyle],
+                    linesStyles :: [LineStyle],
                     linesTitles :: [String]
                 }
               | PlotDotsData
