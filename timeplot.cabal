@@ -1,5 +1,5 @@
 name: timeplot
-version: 1.0.20
+version: 1.0.22
 cabal-version: >=1.6
 build-type: Simple
 license: BSD3
