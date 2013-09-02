@@ -6,7 +6,6 @@ module Graphics.Rendering.Chart.Event (
     eventStart,
     eventEnd,
 
-    defaultPlotEvent,
     plot_event_title,
     plot_event_data,
     plot_event_long_fillstyle,
@@ -16,12 +15,11 @@ module Graphics.Rendering.Chart.Event (
     plot_event_label,
 ) where
 
-import qualified Graphics.Rendering.Cairo as C
+import Control.Lens
 import Graphics.Rendering.Chart
 import Data.Colour
 import Data.Colour.Names
-import Data.Accessor
-import Data.Accessor.Template
+import Data.Default
 import Control.Monad
 
 data Event t e = LongEvent (t,Bool) (t,Bool) e  -- ^ An event that has a beginning and an end. 
@@ -29,10 +27,12 @@ data Event t e = LongEvent (t,Bool) (t,Bool) e  -- ^ An event that has a beginni
                | PulseEvent t e   -- ^ A zero-length event
                deriving (Show)
 
-eventStart (LongEvent (t0,_) (t1,_) _) = t0
+eventStart :: Event t e -> t
+eventStart (LongEvent (t0,_) (_,_) _) = t0
 eventStart (PulseEvent t _) = t
 
-eventEnd (LongEvent (t0,_) (t1,_) _) = t1
+eventEnd :: Event t e -> t
+eventEnd (LongEvent (_,_) (t1,_) _) = t1
 eventEnd (PulseEvent t _) = t
 
 -- | A chart that depict events.
@@ -40,91 +40,87 @@ eventEnd (PulseEvent t _) = t
 -- is drawn like "--[=====]---" and has a beginning and ending moment, and
 -- an impulse event is drawn like "---|----" and has an occurence moment.
 data PlotEvent t e = PlotEvent {
-   plot_event_title_           :: String,
-   plot_event_data_            :: [Event t e],
+   _plot_event_title           :: String,
+   _plot_event_data            :: [Event t e],
    -- | Linestyle with which marks for pulse events will be drawn
-   plot_event_pulse_linestyle_ :: e -> CairoLineStyle,
+   _plot_event_pulse_linestyle :: e -> LineStyle,
    -- | Linestyle with which borders of rectangles for long events will be drawn
-   plot_event_long_linestyle_  :: e -> CairoLineStyle,
+   _plot_event_long_linestyle  :: e -> LineStyle,
    -- | Fillstyle with which interiors of rectangles for long events will be filled
-   plot_event_long_fillstyle_  :: e -> CairoFillStyle,
+   _plot_event_long_fillstyle  :: e -> FillStyle,
    -- | Linestyle with which the "track line" will be drawn
-   plot_event_track_linestyle_ :: CairoLineStyle,
-   plot_event_label_           :: e -> String
+   _plot_event_track_linestyle :: LineStyle,
+   _plot_event_label           :: e -> String
 }
+makeLenses ''PlotEvent
 
-defaultPlotEvent = PlotEvent {
-   plot_event_title_           = "",
-   plot_event_data_            = [],
-   plot_event_pulse_linestyle_ = const $ solidLine 2 (opaque red),
-   plot_event_long_linestyle_  = const $ solidLine 1 (opaque black),
-   plot_event_long_fillstyle_  = const $ solidFillStyle (opaque lightgray),
-   plot_event_track_linestyle_ = solidLine 1 (opaque black),
-   plot_event_label_           = const ""
-}
+instance Default (PlotEvent t e) where
+  def = PlotEvent {
+    _plot_event_title           = "",
+    _plot_event_data            = [],
+    _plot_event_pulse_linestyle = const $ solidLine 2 (opaque red),
+    _plot_event_long_linestyle  = const $ solidLine 1 (opaque black),
+    _plot_event_long_fillstyle  = const $ solidFillStyle (opaque lightgray),
+    _plot_event_track_linestyle = solidLine 1 (opaque black),
+    _plot_event_label           = const ""
+  }
 
 instance ToPlot PlotEvent where
     toPlot p = Plot {
-        plot_render_ = renderPlotEvent p,
-	    plot_legend_ = [(plot_event_title_ p, renderPlotLegendEvent p)],
-	    plot_all_points_ = plotAllPointsEvent p
+      _plot_render = renderPlotEvent p,
+      _plot_legend = [(_plot_event_title p, renderPlotLegendEvent p)],
+      _plot_all_points = plotAllPointsEvent p
     }
 
-renderPlotLegendEvent :: PlotEvent t e -> Rect -> CRender ()
+renderPlotLegendEvent :: PlotEvent t e -> Rect -> ChartBackend ()
 renderPlotLegendEvent p r = return ()
 
 
-filledRect :: CairoFillStyle -> Rect -> CRender ()
-filledRect fs r = setFillStyle fs >> fillPath (rectPath r)
+filledRect :: FillStyle -> Rect -> ChartBackend ()
+filledRect fs r = withFillStyle fs $ fillPath (rectPath r)
 
-framedRect :: CairoLineStyle -> Rect -> CRender ()
-framedRect ls r = setLineStyle ls >> strokePath (rectPath r)
+framedRect :: LineStyle -> Rect -> ChartBackend ()
+framedRect ls r = withLineStyle ls $ strokePath (rectPath r)
 
 barHeight = 7
 pulseHeight = 15
 
-renderPlotEvent :: PlotEvent t e -> PointMapFn t e  -> CRender ()
+renderPlotEvent :: PlotEvent t e -> PointMapFn t e  -> ChartBackend ()
 renderPlotEvent p pmap = do
-      setLineStyle $ plot_event_track_linestyle_ p
-      moveTo (Point x0 cy)
-      lineTo (Point x1 cy)
-      c $ C.stroke
-      mapM_ drawEventFill  (plot_event_data_ p)
-      mapM_ drawEventFrame (plot_event_data_ p)
+      withLineStyle (p ^. plot_event_track_linestyle) $ do
+        strokePointPath [Point x0 cy, Point x1 cy]
+        mapM_ drawEventFill  (p ^. plot_event_data)
+        mapM_ drawEventFrame (p ^. plot_event_data)
     where
       (Point x0 y0) = pmap (LMin,LMin)
       (Point x1 y1) = pmap (LMax,LMax)
       (cx,cy) = ((x0+x1)/2, (y0+y1)/2)
+      
       drawEventFill (PulseEvent t e) = return ()
       drawEventFill (LongEvent (t1,_) (t2,_) e) = do
         let (Point x1 cy)  = pmap (LValue t1, LValue e)
         let (Point x2 cy') = pmap (LValue t2, LValue e) -- Assume cy' == cy (pmap is coordinate-wise)
-        filledRect (plot_event_long_fillstyle_ p e) $ Rect
+        filledRect (p ^. plot_event_long_fillstyle $ e) $ Rect
             (Point x1 (cy-barHeight/2)) (Point x2 (cy+barHeight/2))
 
       drawEventFrame (PulseEvent t e) = do
-        setLineStyle $ plot_event_pulse_linestyle_ p e
-        let (Point x y) = pmap (LValue t, LValue e)
-        moveTo (Point x (y-pulseHeight/2))
-        lineTo (Point x (y+pulseHeight/2))
-        c $ C.stroke
-        let label = plot_event_label_ p e
-        when (not (null label)) $ do
-          extents <- c $ C.textExtents label
-          moveTo (Point x (y - pulseHeight/2 - C.textExtentsHeight extents - C.textExtentsYbearing extents - 1))
-          setLineStyle $ solidLine 2 (opaque black)
-          c $ C.showText label
+        withLineStyle (p ^. plot_event_pulse_linestyle $ e) $ do
+          let (Point x y) = pmap (LValue t, LValue e)
+          strokePointPath [Point x (y-pulseHeight/2), Point x (y+pulseHeight/2)]
+          let label = p ^. plot_event_label $ e
+          unless (null label) $ do
+            textSize <- textSize label
+            withLineStyle (solidLine 2 $ opaque black) $ do
+              drawText (Point x (y - pulseHeight/2 - textSizeHeight textSize - textSizeYBearing textSize - 1)) label
       drawEventFrame (LongEvent (t1,_) (t2,_) e) = do
         let (Point x1 cy)  = pmap (LValue t1, LValue e)
         let (Point x2 cy') = pmap (LValue t2, LValue e) -- Assume cy' == cy (pmap is coordinate-wise)
-        framedRect (plot_event_long_linestyle_ p e) $ Rect
+        framedRect (p ^. plot_event_long_linestyle $ e) $ Rect
             (Point x1 (cy-barHeight/2)) (Point x2 (cy+barHeight/2))
 
 plotAllPointsEvent :: PlotEvent t e -> ([t], [e])
-plotAllPointsEvent p = let (ts, es) = unzip (map decomp d) in (concat ts, es)
+plotAllPointsEvent p = (concat ts, es)
   where
-    d = plot_event_data_ p
     decomp (PulseEvent t             e) = ([t],     e)
     decomp (LongEvent  (t1,_) (t2,_) e) = ([t1,t2], e)
-
-$( deriveAccessors ''PlotEvent )
+    (ts, es) = unzip $ p ^.. plot_event_data . traverse . to decomp
