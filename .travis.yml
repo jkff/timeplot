@@ -1,4 +1,12 @@
 language: haskell
+before_install:
+  - travis_retry sudo apt-get update -qq
+  - travis_retry sudo apt-get --no-install-recommends install libcairo2 libcairo2-dev
+  - travis_retry cabal update
+  - travis_retry cabal install Cabal
+  - travis_retry cabal install gtk2hs-buildtools
+install:
+  - travis_retry cabal install
 notifications:
   email: true
 
