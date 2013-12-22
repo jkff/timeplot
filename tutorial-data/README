@@ -1,0 +1,10 @@
+$ awk '/Successful COMMIT/{print $1 " !commit." $6}' tplot-tutorial.log > commit.trace
+$ head commit.trace
+20121024.115520.85 !commit.dbv:0
+20121024.115537.31 !commit.kth:1
+20121024.115621.03 !commit.dbv:0
+20121024.115707.44 !commit.mth:0
+...
+
+$ tplot -if commit.trace -o commit.png -tf '%Y%m%d.%H%M%OS' -dk 'within[.] acount 5'
+$ # See commit.png
