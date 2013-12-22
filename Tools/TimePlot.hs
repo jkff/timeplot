@@ -234,12 +234,13 @@ mainWithArgs args = do
   when (null args || args == ["--version"]) $ do
     putStrLn ("This is timeplot-" ++ showVersion version ++ " (git " ++ showGitVersion ++ ")") >> exitSuccess
   let !conf = readConf args
-  let render = case (outFormat conf) of {
-      PNG    -> \c w h f -> const () `fmap` renderableToPNGFile c w h f;
-      PDF    -> renderableToPDFFile ;
-      PS     -> renderableToPSFile  ;
-      SVG    -> renderableToSVGFile ;
+  let format = case outFormat conf of {
+      OutPNG -> PNG
+    ; OutPDF -> PDF
+    ; OutPS  -> PS
+    ; OutSVG -> SVG
     }
+  let render r w h f = renderableToFile (fo_size .~ (w, h) $ fo_format .~ format $ def) r f
   case conf of
     ConcreteConf {
         parseTime=parseTime, inFile=inFile, chartKindF=chartKindF,

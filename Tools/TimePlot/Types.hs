@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP, TypeFamilies, BangPatterns #-}
 module Tools.TimePlot.Types where
 
+import Data.Default
 import Data.Time hiding (parseTime)
 import qualified Data.ByteString.Char8 as S
 import Graphics.Rendering.Chart
@@ -20,7 +21,8 @@ unitStatusAxis = AxisData {
   _axis_tropweiv = \_       _ -> Status "" "",
   _axis_ticks    = [(Status "" "", 0)],
   _axis_labels   = [[(Status "" "", "")]],
-  _axis_grid     = []
+  _axis_grid     = [],
+  _axis_visibility = def
 }
 
 data Edge = Rise | Fall | Pulse Status | SetTo Status deriving (Eq,Show)
@@ -30,7 +32,7 @@ data InEvent = InEdge  {evt_track :: S.ByteString, evt_edge :: Edge}
              | InAtom  {evt_track :: S.ByteString, evt_atom :: S.ByteString}
              deriving (Show)
 
-data OutFormat = PNG | PDF | PS | SVG
+data OutFormat = OutPNG | OutPDF | OutPS | OutSVG
 #ifdef HAVE_GTK
                | Window
 #endif

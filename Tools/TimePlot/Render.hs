@@ -58,16 +58,15 @@ dataToPlot' commonTimeAxis p@PlotDotsData{} = StackedLayout $ layoutWithTitle co
                  | color <- dotsColors p
                  | vs <- dotsData p]
 
-layoutWithTitle :: (PlotValue a, Show a) => AxisData LocalTime -> [Plot LocalTime a] -> String -> Bool -> Layout1 LocalTime a
+layoutWithTitle :: (PlotValue a, Show a) => AxisData LocalTime -> [Plot LocalTime a] -> String -> Bool -> Layout LocalTime a
 layoutWithTitle commonTimeAxis plots name showLegend =
-    layout1_title .~ "" $
-    layout1_plots .~ map Left plots $
-    (if showLegend then id else (layout1_legend .~ Nothing)) $
-    layout1_bottom_axis . laxis_generate .~ (\_ -> commonTimeAxis) $
-    layout1_top_axis    . laxis_generate .~ (\_ -> commonTimeAxis) $
-    layout1_left_axis   . laxis_title .~ name $
-    layout1_margin .~ 0 $
-    layout1_grid_last .~ True $
+    layout_title .~ "" $
+    layout_plots .~ plots $
+    (if showLegend then id else (layout_legend .~ Nothing)) $
+    layout_x_axis . laxis_generate .~ (\_ -> commonTimeAxis) $
+    layout_y_axis . laxis_title .~ name $
+    layout_margin .~ 0 $
+    layout_grid_last .~ True $
     def
 
 ourPlotBars :: (BarsPlotValue a) => PlotBars LocalTime a

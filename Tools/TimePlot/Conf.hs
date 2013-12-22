@@ -68,8 +68,8 @@ readConf args = readConf' parseTime
       where
         inFile      = single "input file"  "-if" (error "No input file (-if) specified")
         outFile     = single "output file" "-o"  (error "No output file (-o) specified")
-        outFormat   = maybe PNG id $ lookup (single "output format" "-of" (name2format outFile)) $
-            [("png",PNG), ("pdf",PDF), ("ps",PS), ("svg",SVG)]
+        outFormat   = maybe OutPNG id $ lookup (single "output format" "-of" (name2format outFile)) $
+            [("png",OutPNG), ("pdf",OutPDF), ("ps",OutPS), ("svg",OutSVG)]
           where
             name2format = reverse . takeWhile (/='.') . reverse
         outRes      = parseRes $ single "output resolution" "-or" "640x480"
