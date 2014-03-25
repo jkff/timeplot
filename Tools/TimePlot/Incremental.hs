@@ -43,7 +43,7 @@ byTimeBins ts s = stateful init' insert' finalize'
     insert' (t,a) (t1:t2:ts, curBin, !s) 
       | t < t1 = error "Times are not in ascending order"
       | t < t2 = (t1:t2:ts, a:curBin, s)
-      | True   = (t2:ts, [a], insert s (t1,reverse curBin))
+      | True   = insert' (t, a) (t2:ts, [], insert s (t1, reverse curBin))
     finalize' (t1:t2:ts, curBin, s) = finalize (insert s (t1,reverse curBin))
 
 
