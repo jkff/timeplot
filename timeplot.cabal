@@ -1,5 +1,5 @@
 name: timeplot
-version: 1.0.23
+version: 1.0.24
 cabal-version: >=1.6
 build-type: Simple
 license: BSD3
@@ -34,4 +34,4 @@ executable tplot
                    data-default -any, lens >= 3.9,
                    regex-tdfa -any, strptime >=0.1.7, time -any,
                    transformers -any,
-                   vcs-revision -any, template-haskell -any
+                   vcs-revision >=0.0.2, template-haskell -any
