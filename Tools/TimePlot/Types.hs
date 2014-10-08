@@ -95,6 +95,7 @@ data ChartKind t = KindEvent
                | KindDuration  { subKind :: ChartKind t, dropSubtrack :: Bool }
                | KindWithin    { mapName :: S.ByteString -> S.ByteString, subKind :: ChartKind t }
                | KindACount    { binSize :: Delta t }
+               | KindCount     { binSize :: Delta t }
                | KindAPercent  { binSize :: Delta t, baseCount :: Double }
                | KindAFreq     { binSize :: Delta t }
                | KindQuantile  { binSize :: Delta t, quantiles :: [Double] }

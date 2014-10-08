@@ -106,6 +106,8 @@ readConf args = readConf' parseTime
         parseKind :: [String] -> ChartKind LocalTime
         parseKind ["acount",  n  ] = KindACount    {binSize=read n}
         parseKind ("acount":_)     = error "acount requires a single numeric argument, bin size, e.g.: -dk 'acount 1'"
+        parseKind ["count",  n  ]  = KindCount    {binSize=read n}
+        parseKind ("count":_)      = error "count requires a single numeric argument, bin size, e.g.: -dk 'count 1'"
         parseKind ["apercent",n,b] = KindAPercent  {binSize=read n,baseCount=read b}
         parseKind ("apercent":_)   = error "apercent requires two numeric arguments: bin size and base value, e.g.: -dk 'apercent 1 480'"
         parseKind ["afreq",   n  ] = KindAFreq     {binSize=read n}

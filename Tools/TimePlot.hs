@@ -180,6 +180,8 @@ showHelp = mapM_ putStrLn [ "",
   "     'what was the average number of active events or impulses in that",
   "     interval'. When used inside 'within', the histogram is a stacked one,",
   "     with one vertical bar per subtrack in each bin.",
+  "  'count N' is same as 'acount N' but scaled by the bin size, i.e. rather than ",
+  "     activity rate per time unit, it's activity count per time bin. ",
   "  'apercent N B' is for activity percentages of a basis: like 'acount N',",
   "     but instead of X you get 100*X/B",
   "  'afreq N' is for activity frequencies: it's like acount, but relative",
@@ -240,7 +242,7 @@ mainWithArgs args = do
     ; OutPS  -> PS
     ; OutSVG -> SVG
     }
-  let render r w h f = renderableToFile (fo_size .~ (w, h) $ fo_format .~ format $ def) r f
+  let render r w h f = renderableToFile (fo_size .~ (w, h) $ fo_format .~ format $ def) f r
   case conf of
     ConcreteConf {
         parseTime=parseTime, inFile=inFile, chartKindF=chartKindF,

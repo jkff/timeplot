@@ -27,6 +27,7 @@ type PlotGen = String -> LocalTime -> LocalTime -> I.StreamSummary (LocalTime, I
 
 initGen :: ChartKind LocalTime -> PlotGen
 initGen (KindACount bs)         = genActivity (\sns n -> n) bs
+initGen (KindCount bs)          = genActivity (\sns n -> n*toSeconds bs (undefined::LocalTime)) bs
 initGen (KindAPercent bs b)     = genActivity (\sns n -> 100*n/b) bs
 initGen (KindAFreq bs)          = genActivity (\sns n -> if n == 0 then 0 else (n / sum (M.elems sns))) bs
 initGen (KindFreq bs k)         = genAtoms atoms2freqs bs k
