@@ -16,7 +16,7 @@ import Tools.TimePlot.Types
 import Tools.TimePlot.Plots
 
 dataToPlot :: AxisData LocalTime -> (LocalTime,LocalTime) -> PlotData -> StackedLayout LocalTime
-dataToPlot commonTimeAxis tr = dataToPlot' commonTimeAxis . constrainTime tr
+dataToPlot commonTimeAxis tr pd = dataToPlot' commonTimeAxis $ constrainTime tr pd
 
 constrainTime :: (LocalTime,LocalTime) -> PlotData -> PlotData
 constrainTime tr@(t0,t1) p@PlotBarsData{} = p {barsValues = filter (inRange tr . fst) (barsValues p)}

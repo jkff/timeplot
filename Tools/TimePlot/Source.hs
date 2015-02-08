@@ -7,14 +7,18 @@ import qualified Data.ByteString.Lazy.Char8 as B
 import Data.ByteString.Lex.Lazy.Double
 import Tools.TimePlot.Types
 
-readSource :: (Show t) => (B.ByteString -> Maybe (t,B.ByteString)) -> FilePath -> IO [(t, InEvent)]
-readSource readTime f = (map parseLine . filter (not . B.null) . blines) `fmap` (if f == "-" then B.getContents else B.readFile f)
+readSource :: (Show t) => (B.ByteString -> Maybe (t,B.ByteString)) -> FilePath -> IO (ParseResult t)
+readSource readTime f = (toParseResult . map parseLine . filter (not . B.null) . blines) `fmap` 
+                        (if f == "-" then B.getContents else B.readFile f)
   where
     blines   = map pruneLF . B.split '\n'
     pruneLF b | not (B.null b) && (B.last b == '\r') = B.init b
               | otherwise                            = b
     strict   = S.concat . B.toChunks
-    parseLine s = (\x -> case x of { Just e -> e; Nothing -> error $ "Unparseable input line: " ++ B.unpack s }) $ do
+    toParseResult [] = ParseResult [] []
+    toParseResult (Left e:es) = let ~(ParseResult pd up) = toParseResult es in ParseResult (e:pd) up
+    toParseResult (Right s:es) = let ~(ParseResult pd up) = toParseResult es in ParseResult pd (s:up)
+    parseLine s = (\x -> case x of { Just e -> Left e; Nothing -> Right (strict s) }) $ do
       (t, s') <- readTime s
       (_, s'') <- B.uncons s'
       (c,rest) <- B.uncons s''

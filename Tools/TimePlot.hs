@@ -40,12 +40,15 @@ import qualified Tools.TimePlot.Incremental as I
 --  * Generate plot data (one-pass multiplexed to tracks)
 -- 
 makeChart :: (S.ByteString -> [(ChartKind LocalTime, S.ByteString)]) -> 
-             IO [(LocalTime, InEvent)] ->
+             IO (ParseResult LocalTime) ->
              Maybe LocalTime -> Maybe LocalTime ->
              (LocalTime -> String -> String) -> 
              IO (Renderable ())
-makeChart chartKindF readEvents minT maxT transformLabel = do
-  events <- readEvents
+makeChart chartKindF parseEvents minT maxT transformLabel = do
+  ParseResult events unparseable <- parseEvents
+  when (not (null unparseable)) $ do
+    putStrLn $ "Unparseable lines found" ++ (if null (drop 10 unparseable) then ":" else " (showing first 10):")
+    mapM_ (putStrLn . S.unpack) (take 10 unparseable)
   if null events
     then return emptyRenderable
     else do
@@ -67,7 +70,7 @@ makeChart chartKindF readEvents minT maxT transformLabel = do
       let commonTimeAxis = transformLabels $ autoAxis [minOutTime, maxOutTime]
       
       -- Pass 2
-      events' <- dropLateEvents `fmap` readEvents
+      events' <- (dropLateEvents . parsedData) `fmap` parseEvents
       let eventsToTracks = [(outTrack, (t,e)) | (t,e) <- events', (outTrack,_) <- i2oTracks (evt_track e)]
 
       let initPlot track = initGen (outTracks M.! track) (S.unpack track) minTime maxTime

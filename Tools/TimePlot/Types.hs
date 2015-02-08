@@ -138,3 +138,9 @@ data PlotData = PlotBarsData
                     dotsTitles :: [String]
                 }
               deriving (Show)
+
+data ParseResult t = ParseResult {
+    parsedData :: [(t, InEvent)],
+    unparseableLines :: [S.ByteString]
+  }
+
