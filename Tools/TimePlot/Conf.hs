@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, FlexibleContexts#-}
 module Tools.TimePlot.Conf (
     ConcreteConf(..),
     Conf,
