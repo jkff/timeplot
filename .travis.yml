@@ -1,12 +1,35 @@
-language: haskell
+# Based on http://docs.haskellstack.org/en/stable/travis_ci.html
+# and http://docs.haskellstack.org/en/stable/GUIDE.html#travis-with-caching
+sudo: false
+
+# Caching so the next build will be fast too.
+cache:
+  directories:
+    - $HOME/.stack
+
+# Choose a lightweight base image; we provide our own build tools.
+language: c
+
+# GHC depends on GMP. You can add other dependencies here as well.
+addons:
+  apt:
+    packages:
+    - libgmp-dev
+    - libcairo2
+    - libcairo2-dev
+
 before_install:
-  - travis_retry sudo apt-get update -qq
-  - travis_retry sudo apt-get --no-install-recommends install libcairo2 libcairo2-dev
-  - travis_retry cabal update
-  - travis_retry cabal install Cabal
-  - travis_retry cabal install gtk2hs-buildtools
-install:
-  - travis_retry cabal install
+  # Download and unpack the stack executable
+  - mkdir -p ~/.local/bin
+  - export PATH=$HOME/.local/bin:$PATH
+  - travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+
+# --no-terminal works around some quirks in Travis's terminal implementation.
+script:
+- stack $ARGS --no-terminal --install-ghc install alex happy
+- stack $ARGS --no-terminal --install-ghc install gtk2hs-buildtools
+- stack $ARGS --no-terminal --install-ghc build
+
 notifications:
   email: true
 
