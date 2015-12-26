@@ -12,8 +12,7 @@ import Data.Time.Parse
 import Data.List
 import Graphics.Rendering.Chart
 import qualified Data.ByteString.Char8 as S
-import qualified Data.ByteString.Lazy.Char8 as B
-import Data.ByteString.Lex.Lazy.Double
+import Data.ByteString.Lex.Fractional
 
 import Unsafe.Coerce
 
@@ -22,7 +21,7 @@ import Tools.TimePlot.Types
 data ConcreteConf t =
   ConcreteConf {
     inFile        :: !FilePath,
-    parseTime     :: !(B.ByteString -> Maybe (t, B.ByteString)),
+    parseTime     :: !(S.ByteString -> Maybe (t, S.ByteString)),
     -- Input track -> (chart kind, suffix to append to track name for N:1 out:in mapping)
     chartKindF    :: !(S.ByteString -> [(ChartKind t, S.ByteString)]),
 
@@ -43,14 +42,14 @@ readConf :: [String] -> Conf
 readConf args = readConf' parseTime 
   where
     pattern = case (words $ single "time format" "-tf" ("%Y-%m-%d %H:%M:%OS")) of
-        "date":f -> B.pack (unwords f)
-        f        -> B.pack (unwords f)
+        "date":f -> S.pack (unwords f)
+        f        -> S.pack (unwords f)
     Just (ourBaseTime,_) = strptime "%Y-%m-%d %H:%M:%OS" "1900-01-01 00:00:00" 
     {-# NOINLINE ourStrptime #-}
-    ourStrptime :: B.ByteString -> Maybe (LocalTime, B.ByteString)
-    ourStrptime = if pattern == B.pack "elapsed" 
+    ourStrptime :: S.ByteString -> Maybe (LocalTime, S.ByteString)
+    ourStrptime = if pattern == S.pack "elapsed" 
                     then \s -> do
-                      (d, s') <- readDouble s
+                      (d, s') <- readSigned readDecimal s
                       return (fromSeconds d ourBaseTime `add` ourBaseTime, s')
                     else strptime pattern
     parseTime s = ourStrptime s
@@ -61,7 +60,7 @@ readConf args = readConf' parseTime
       []    -> def
       _     -> error $ "Single argument expected for: "++desc++" ("++name++")"
 
-    readConf' :: (B.ByteString -> Maybe (LocalTime, B.ByteString)) -> ConcreteConf LocalTime
+    readConf' :: (S.ByteString -> Maybe (LocalTime, S.ByteString)) -> ConcreteConf LocalTime
     readConf' parseTime = ConcreteConf {inFile=inFile, outFile=outFile, outFormat=outFormat, outResolution=outRes,
                       chartKindF=chartKindF, parseTime=parseTime, fromTime=fromTime, toTime=toTime,
                       transformLabel=transformLabel}
@@ -90,11 +89,11 @@ readConf args = readConf' parseTime
                                  case [k | (Cut, p, k) <- rks, p s] of {k:_ -> [k]; _ -> []}
             matches regex = matchTest (makeRegexOpts defaultCompOpt (ExecOption {captureGroups = False}) regex)
 
-        fromTime    = fst `fmap` (parseTime . B.pack $ single "minimum time (inclusive)" "-fromTime" "")
-        toTime      = fst `fmap` (parseTime . B.pack $ single "maximum time (exclusive)" "-toTime"   "")
-        baseTime    = if pattern == B.pack "elapsed"
+        fromTime    = fst `fmap` (parseTime . S.pack $ single "minimum time (inclusive)" "-fromTime" "")
+        toTime      = fst `fmap` (parseTime . S.pack $ single "maximum time (exclusive)" "-toTime"   "")
+        baseTime    = if pattern == S.pack "elapsed"
                         then Just ourBaseTime
-                        else (fst `fmap` (parseTime . B.pack $ single "base time"                "-baseTime" ""))
+                        else (fst `fmap` (parseTime . S.pack $ single "base time"                "-baseTime" ""))
 
         transformLabel t s = case baseTime of
           Nothing -> s
