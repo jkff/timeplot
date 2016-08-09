@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE CPP #-}
 module Graphics.Rendering.Chart.Event (
     PlotEvent(..),
     Event(..),
@@ -21,6 +22,11 @@ import Data.Colour
 import Data.Colour.Names
 import Data.Default
 import Control.Monad
+
+#if ! MIN_VERSION_Chart(1,7,0)
+-- legacy map for Chart<1.7
+#    define BackendProgram ChartBackend
+#endif
 
 data Event t e = LongEvent (t,Bool) (t,Bool) e  -- ^ An event that has a beginning and an end. 
                                                 --   True = "known explicitly", False = "implicit" (e.g. imposed by axis bounds)
@@ -72,20 +78,20 @@ instance ToPlot PlotEvent where
       _plot_all_points = plotAllPointsEvent p
     }
 
-renderPlotLegendEvent :: PlotEvent t e -> Rect -> ChartBackend ()
+renderPlotLegendEvent :: PlotEvent t e -> Rect -> BackendProgram ()
 renderPlotLegendEvent p r = return ()
 
 
-filledRect :: FillStyle -> Rect -> ChartBackend ()
+filledRect :: FillStyle -> Rect -> BackendProgram ()
 filledRect fs r = withFillStyle fs $ fillPath (rectPath r)
 
-framedRect :: LineStyle -> Rect -> ChartBackend ()
+framedRect :: LineStyle -> Rect -> BackendProgram ()
 framedRect ls r = withLineStyle ls $ strokePath (rectPath r)
 
 barHeight = 7
 pulseHeight = 15
 
-renderPlotEvent :: PlotEvent t e -> PointMapFn t e  -> ChartBackend ()
+renderPlotEvent :: PlotEvent t e -> PointMapFn t e  -> BackendProgram ()
 renderPlotEvent p pmap = do
       withLineStyle (p ^. plot_event_track_linestyle) $ do
         strokePointPath [Point x0 cy, Point x1 cy]
