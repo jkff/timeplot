@@ -9,6 +9,7 @@ import Control.Applicative
 import Data.List (foldl', sort)
 import Data.Maybe
 import qualified Data.Map as M
+import qualified Data.Map.Strict as MS
 import qualified Data.Set as Set
 import qualified Data.ByteString.Char8 as S
 
@@ -271,7 +272,7 @@ edges2binsSummary binSize tMin tMax = I.stateful (M.empty, iterate (add binSize)
     --  * r  = reversed list of results per bins
     modState s t (!m, ts,r) f = (m', ts, r)
       where
-        m' = M.insertWith' (\new !old -> f old) s (f (0,t,0,0)) m
+        m' = MS.insertWith (\new !old -> f old) s (f (0,t,0,0)) m
 
     flushBin st@(m,t1:t2:ts,!r) = (m', t2:ts, r')
       where
