@@ -23,9 +23,9 @@ source-repository head
 
 executable tplot
     main-is: Tools/TimePlot.hs
-    other-modules: Tools.TimePlot.Conf Tools.TimePlot.Incremental 
-                   Tools.TimePlot.Plots Tools.TimePlot.Render Tools.TimePlot.Source 
-                   Tools.TimePlot.Types
+    other-modules: Tools.TimePlot.Conf Tools.TimePlot.Incremental
+                   Tools.TimePlot.Plots Tools.TimePlot.Render Tools.TimePlot.Source
+                   Tools.TimePlot.Types Paths_timeplot
     buildable: True
     ghc-options: -rtsopts
     other-modules: Graphics.Rendering.Chart.Event
