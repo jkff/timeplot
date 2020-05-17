@@ -1,6 +1,6 @@
 name: timeplot
-version: 1.0.32
-cabal-version: >=1.6
+version: 1.0.33
+cabal-version: >=1.10
 build-type: Simple
 license: BSD3
 license-file: LICENSE
@@ -23,6 +23,7 @@ source-repository head
 
 executable tplot
     main-is: Tools/TimePlot.hs
+    default-language: Haskell2010
     other-modules: Tools.TimePlot.Conf Tools.TimePlot.Incremental
                    Tools.TimePlot.Plots Tools.TimePlot.Render Tools.TimePlot.Source
                    Tools.TimePlot.Types Paths_timeplot
