@@ -86,9 +86,6 @@ diffLocalToSeconds !t2 !t1 = 86400.0*fromIntegral (diffDays d2 d1) + fromIntegra
     (d1,d2,TimeOfDay h1 m1 s1,TimeOfDay h2 m2 s2) = (localDay t1, localDay t2, localTimeOfDay t1, localTimeOfDay t2)
 
 
-instance Read NominalDiffTime where
-  readsPrec n s = [(fromSeconds i (undefined::LocalTime), s') | (i,s') <- readsPrec n s]
-
 data SumSubtrackStyle = SumStacked | SumOverlayed
 
 data ChartKind t = KindEvent
